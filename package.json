@@ -1,0 +1,16 @@
+{
+  "name": "ebics-test-server",
+  "version": "0.1.0",
+  "private": true,
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  },
+  "scripts": {
+    "dev": "pnpm --filter @ebics-test-server/server dev",
+    "dev:admin": "pnpm --filter @ebics-test-server/admin-ui dev",
+    "build:admin": "pnpm --filter @ebics-test-server/admin-ui build",
+    "start": "pnpm --filter @ebics-test-server/server start",
+    "test": "pnpm --filter @ebics-test-server/server test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

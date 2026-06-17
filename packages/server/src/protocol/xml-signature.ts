@@ -1,0 +1,101 @@
+import { C14nCanonicalization } from 'xml-crypto';
+import { createVerify, createHash } from 'node:crypto';
+import { XMLSerializer } from '@xmldom/xmldom';
+import type { XmlDocument } from './xml-parser.js';
+import forge from 'node-forge';
+
+const c14n = new C14nCanonicalization();
+
+export function verifyAuthSignature(doc: XmlDocument, publicKeyPem: string): boolean {
+  // Find AuthSignature element (in H005 namespace)
+  const authSigElements = doc.getElementsByTagNameNS('urn:org:ebics:H005', 'AuthSignature');
+  if (authSigElements.length === 0) return false;
+  const authSig = authSigElements.item(0)!;
+
+  // Extract SignedInfo and SignatureValue from ds namespace
+  const signedInfoElements = authSig.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'SignedInfo');
+  if (signedInfoElements.length === 0) return false;
+  const signedInfo = signedInfoElements.item(0)!;
+
+  const sigValueElements = authSig.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'SignatureValue');
+  if (sigValueElements.length === 0) return false;
+  const signatureValue = sigValueElements.item(0)!.textContent?.trim();
+  if (!signatureValue) return false;
+
+  // Extract digest from SignedInfo
+  const digestValueElements = signedInfo.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'DigestValue');
+  if (digestValueElements.length === 0) return false;
+  const expectedDigest = digestValueElements.item(0)!.textContent?.trim();
+  if (!expectedDigest) return false;
+
+  // Verify digest: canonicalize all elements with authenticate="true" and compute SHA-256
+  const authNodes: any[] = [];
+  function collectAuth(node: any) {
+    if (node.nodeType === 1) {
+      if (node.getAttribute && node.getAttribute('authenticate') === 'true') {
+        authNodes.push(node);
+      }
+      if (node.childNodes) {
+        for (let i = 0; i < node.childNodes.length; i++) {
+          collectAuth(node.childNodes.item(i));
+        }
+      }
+    }
+  }
+  collectAuth(doc.documentElement);
+
+  let canonicalized = '';
+  for (const n of authNodes) {
+    canonicalized += c14n.process(n, {});
+  }
+
+  // xml-crypto's C14nCanonicalization renders the in-scope default namespace on the
+  // detached apex node but omits in-scope prefix namespaces not visibly used inside the
+  // subtree (e.g. `ds`, declared on the request root). Inclusive C14n
+  // (REC-xml-c14n-20010315) requires re-declaring them at the apex, so the spec-correct
+  // client (@kage0x3b/ebics-client) injects `xmlns:ds` here. Mirror that fixup so our
+  // canonical form is byte-identical to the one the client digested.
+  canonicalized = canonicalized.replace(
+    /xmlns="urn:org:ebics:H005"/g,
+    'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+  );
+
+  const computedDigest = createHash('sha256').update(canonicalized).digest('base64');
+  if (computedDigest !== expectedDigest) {
+    console.error('[AuthSig] Digest mismatch:');
+    console.error('  expected:', expectedDigest);
+    console.error('  computed:', computedDigest);
+    console.error('  authNodes:', authNodes.length);
+    console.error('  canonicalized (first 500):', canonicalized.slice(0, 500));
+    return false;
+  }
+
+  // Verify signature: canonicalize SignedInfo, verify with RSA-SHA256.
+  // Same in-scope-namespace fixup as the digest: the client re-declares the default
+  // H005 namespace on the SignedInfo apex (in scope from the request root) before signing.
+  const signedInfoC14n = c14n
+    .process(signedInfo as unknown as Node, {})
+    .replace(
+      'xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+      'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+    );
+
+  const verifier = createVerify('RSA-SHA256');
+  verifier.update(signedInfoC14n);
+  const sigResult = verifier.verify(publicKeyPem, signatureValue, 'base64');
+  if (!sigResult) {
+    console.error('[AuthSig] Signature verification failed');
+    console.error('  signedInfoC14n (first 500):', signedInfoC14n.slice(0, 500));
+  }
+  return sigResult;
+}
+
+export function extractPublicKeyFromCertPem(certPem: string): string {
+  const cert = forge.pki.certificateFromPem(certPem);
+  return forge.pki.publicKeyToPem(cert.publicKey as forge.pki.rsa.PublicKey);
+}
+
+export function extractPublicKeyFromCertBase64(certBase64: string): string {
+  const pem = `-----BEGIN CERTIFICATE-----\n${certBase64}\n-----END CERTIFICATE-----`;
+  return extractPublicKeyFromCertPem(pem);
+}

@@ -1,0 +1,246 @@
+import { Hono } from 'hono';
+import type { AppStore } from '../store/types.js';
+import { calculateIban } from '../banking/iban.js';
+import { generateCamt053 } from '../banking/generators/camt053.js';
+import { generateMt940 } from '../banking/generators/mt940.js';
+
+export function createBankingAdminRoute(store: AppStore) {
+  const app = new Hono();
+
+  // Bank config
+
+  app.get('/bank', (c) => {
+    const config = store.getBankConfig();
+    if (!config) return c.json({ error: 'Bank not configured' }, 404);
+    return c.json(config);
+  });
+
+  app.post('/bank', async (c) => {
+    const body = await c.req.json<{ blz: string; name: string; bic: string }>();
+    store.setBankConfig(body);
+    return c.json(body);
+  });
+
+  // Persons
+
+  app.get('/persons', (c) => {
+    return c.json(store.listPersons());
+  });
+
+  app.post('/persons', async (c) => {
+    const body = await c.req.json<{
+      name: string;
+      externalId?: string;
+      addressLine1?: string;
+      addressLine2?: string;
+      country?: string;
+    }>();
+    const person = store.createPerson({
+      name: body.name,
+      externalId: body.externalId,
+      addressLine1: body.addressLine1,
+      addressLine2: body.addressLine2,
+      country: body.country ?? 'DE',
+    });
+    return c.json(person, 201);
+  });
+
+  app.get('/persons/:id', (c) => {
+    const person = store.getPerson(parseInt(c.req.param('id'), 10));
+    if (!person) return c.json({ error: 'Not found' }, 404);
+    return c.json(person);
+  });
+
+  app.delete('/persons/:id', (c) => {
+    store.deletePerson(parseInt(c.req.param('id'), 10));
+    return c.json({ status: 'deleted' });
+  });
+
+  // Accounts
+
+  app.get('/accounts', (c) => {
+    return c.json(store.listAccounts());
+  });
+
+  app.post('/accounts', async (c) => {
+    const body = await c.req.json<{
+      personId: number;
+      currency?: string;
+      name: string;
+    }>();
+
+    const bankConfig = store.getBankConfig();
+    if (!bankConfig) return c.json({ error: 'Bank not configured — call POST /api/banking/bank first' }, 400);
+
+    const person = store.getPerson(body.personId);
+    if (!person) return c.json({ error: 'Person not found' }, 404);
+
+    const seq = store.getNextAccountSequence();
+    const accountNumber = seq.toString().padStart(10, '0');
+    const iban = calculateIban(bankConfig.blz, accountNumber);
+
+    const account = store.createAccount({
+      personId: body.personId,
+      iban,
+      accountNumber,
+      currency: body.currency ?? 'EUR',
+      name: body.name,
+    });
+    return c.json(account, 201);
+  });
+
+  app.get('/accounts/:id', (c) => {
+    const account = store.getAccount(parseInt(c.req.param('id'), 10));
+    if (!account) return c.json({ error: 'Not found' }, 404);
+    return c.json(account);
+  });
+
+  app.get('/persons/:personId/accounts', (c) => {
+    return c.json(store.listAccountsForPerson(parseInt(c.req.param('personId'), 10)));
+  });
+
+  // Partner access
+
+  app.get('/partners/:partnerId/accounts', (c) => {
+    return c.json(store.listAccountsForPartner(c.req.param('partnerId')));
+  });
+
+  app.post('/partners/:partnerId/accounts/:accountId', (c) => {
+    store.grantAccountAccess(c.req.param('partnerId'), parseInt(c.req.param('accountId'), 10));
+    return c.json({ status: 'granted' });
+  });
+
+  app.delete('/partners/:partnerId/accounts/:accountId', (c) => {
+    store.revokeAccountAccess(c.req.param('partnerId'), parseInt(c.req.param('accountId'), 10));
+    return c.json({ status: 'revoked' });
+  });
+
+  // Bookings
+
+  app.get('/accounts/:id/bookings', (c) => {
+    const accountId = parseInt(c.req.param('id'), 10);
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    return c.json(store.listBookingsForAccount(accountId, from, to));
+  });
+
+  app.post('/accounts/:id/bookings', async (c) => {
+    const accountId = parseInt(c.req.param('id'), 10);
+    const account = store.getAccount(accountId);
+    if (!account) return c.json({ error: 'Account not found' }, 404);
+
+    const body = await c.req.json<{
+      amountCents: number;
+      valueDate: string;
+      bookingDate?: string;
+      counterpartyName?: string;
+      counterpartyIban?: string;
+      counterpartyBic?: string;
+      remittanceInfo?: string;
+      endToEndId?: string;
+      transactionCode?: string;
+      currency?: string;
+    }>();
+
+    const booking = store.createBooking({
+      accountId,
+      amountCents: body.amountCents,
+      currency: body.currency ?? account.currency,
+      valueDate: body.valueDate,
+      bookingDate: body.bookingDate ?? body.valueDate,
+      counterpartyName: body.counterpartyName,
+      counterpartyIban: body.counterpartyIban,
+      counterpartyBic: body.counterpartyBic,
+      remittanceInfo: body.remittanceInfo,
+      endToEndId: body.endToEndId,
+      transactionCode: body.transactionCode ?? 'NTRF',
+    });
+    return c.json(booking, 201);
+  });
+
+  // Statement preview
+
+  app.get('/accounts/:id/statement', (c) => {
+    const accountId = parseInt(c.req.param('id'), 10);
+    const account = store.getAccount(accountId);
+    if (!account) return c.json({ error: 'Account not found' }, 404);
+
+    const person = store.getPerson(account.personId);
+    if (!person) return c.json({ error: 'Person not found' }, 404);
+
+    const bankConfig = store.getBankConfig();
+    if (!bankConfig) return c.json({ error: 'Bank not configured' }, 400);
+
+    const format = c.req.query('format') ?? 'camt.053';
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 86400_000);
+    const fromDate = c.req.query('from') ?? thirtyDaysAgo.toISOString().slice(0, 10);
+    const toDate = c.req.query('to') ?? now.toISOString().slice(0, 10);
+
+    const bookings = store.listBookingsForAccount(accountId, fromDate, toDate);
+    const openingBalance = store.getOpeningBalanceCents(accountId, fromDate);
+
+    if (format === 'mt940') {
+      const content = generateMt940(account, bankConfig, bookings, openingBalance, fromDate, toDate);
+      return c.text(content);
+    }
+
+    const content = generateCamt053(account, person, bankConfig, bookings, openingBalance, fromDate, toDate);
+    return c.body(content, 200, { 'Content-Type': 'application/xml; charset=utf-8' });
+  });
+
+  // Demo seed
+
+  app.post('/seed/demo', (c) => {
+    const bankConfig = { blz: '10020030', name: 'EBICS Test Bank AG', bic: 'ETBADE2AXXX' };
+    store.setBankConfig(bankConfig);
+
+    const alice = store.createPerson({ name: 'Alice Mustermann', externalId: 'alice', country: 'DE' });
+    const bob = store.createPerson({ name: 'Bob Geschäftsmann', externalId: 'bob', country: 'DE' });
+
+    const aliceAccNum = store.getNextAccountSequence().toString().padStart(10, '0');
+    const aliceIban = calculateIban(bankConfig.blz, aliceAccNum);
+    const aliceAcc = store.createAccount({
+      personId: alice.id, iban: aliceIban, accountNumber: aliceAccNum,
+      currency: 'EUR', name: 'Girokonto Alice',
+    });
+
+    const bobAccNum = store.getNextAccountSequence().toString().padStart(10, '0');
+    const bobIban = calculateIban(bankConfig.blz, bobAccNum);
+    const bobAcc = store.createAccount({
+      personId: bob.id, iban: bobIban, accountNumber: bobAccNum,
+      currency: 'EUR', name: 'Geschäftskonto Bob',
+    });
+
+    store.grantAccountAccess('PARTNER1', aliceAcc.id);
+    store.grantAccountAccess('PARTNER2', bobAcc.id);
+
+    const today = new Date();
+    const d = (daysAgo: number) => {
+      const dt = new Date(today.getTime() - daysAgo * 86400_000);
+      return dt.toISOString().slice(0, 10);
+    };
+
+    const bookings = [
+      // Alice's bookings
+      store.createBooking({ accountId: aliceAcc.id, amountCents: 500000, currency: 'EUR', valueDate: d(55), bookingDate: d(55), counterpartyName: 'Arbeitgeber GmbH', counterpartyIban: 'DE89370400440532013000', counterpartyBic: 'COBADEFFXXX', remittanceInfo: 'Gehalt November', transactionCode: 'NTRF' }),
+      store.createBooking({ accountId: aliceAcc.id, amountCents: -120050, currency: 'EUR', valueDate: d(50), bookingDate: d(50), counterpartyName: 'Hausverwaltung Müller', counterpartyIban: 'DE27100777770209299700', remittanceInfo: 'Miete Dezember', transactionCode: 'NTRF' }),
+      store.createBooking({ accountId: aliceAcc.id, amountCents: -3599, currency: 'EUR', valueDate: d(40), bookingDate: d(40), counterpartyName: 'Amazon EU S.a.r.l.', counterpartyIban: 'LU280019400644750000', remittanceInfo: 'Bestellung 302-1234567', transactionCode: 'NTRF' }),
+      store.createBooking({ accountId: aliceAcc.id, amountCents: 200000, currency: 'EUR', valueDate: d(30), bookingDate: d(30), counterpartyName: 'Bob Geschäftsmann', counterpartyIban: bobIban, counterpartyBic: bankConfig.bic, remittanceInfo: 'Darlehen', endToEndId: 'E2E-LOAN-001', transactionCode: 'NTRF' }),
+      store.createBooking({ accountId: aliceAcc.id, amountCents: -50000, currency: 'EUR', valueDate: d(15), bookingDate: d(15), counterpartyName: 'Sparkasse Sparbuch', counterpartyIban: 'DE44500105175407324931', remittanceInfo: 'Spareinlage', transactionCode: 'NTRF' }),
+      // Bob's bookings
+      store.createBooking({ accountId: bobAcc.id, amountCents: 1500000, currency: 'EUR', valueDate: d(50), bookingDate: d(50), counterpartyName: 'Kunde AG', counterpartyIban: 'DE89370400440532013000', remittanceInfo: 'Rechnung 2025-001', endToEndId: 'E2E-INV-001', transactionCode: 'NTRF' }),
+      store.createBooking({ accountId: bobAcc.id, amountCents: -200000, currency: 'EUR', valueDate: d(30), bookingDate: d(30), counterpartyName: 'Alice Mustermann', counterpartyIban: aliceIban, counterpartyBic: bankConfig.bic, remittanceInfo: 'Darlehen an Alice', endToEndId: 'E2E-LOAN-001', transactionCode: 'NTRF' }),
+      store.createBooking({ accountId: bobAcc.id, amountCents: -450000, currency: 'EUR', valueDate: d(20), bookingDate: d(20), counterpartyName: 'Finanzamt Berlin', counterpartyIban: 'DE02120300000000202051', remittanceInfo: 'Umsatzsteuer Q3 2025', transactionCode: 'NTRF' }),
+    ];
+
+    return c.json({
+      bank: bankConfig,
+      persons: [alice, bob],
+      accounts: [store.getAccount(aliceAcc.id), store.getAccount(bobAcc.id)],
+      bookingCount: bookings.length,
+    });
+  });
+
+  return app;
+}

@@ -1,0 +1,13 @@
+node_modules/
+dist/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.env
+.env.*
+*.log
+coverage/
+.DS_Store
+packages/admin-ui/build/
+packages/admin-ui/.svelte-kit/
