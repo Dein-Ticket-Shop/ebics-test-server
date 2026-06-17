@@ -409,6 +409,26 @@ describe('Downloads', () => {
       expect(orderData).toContain(USER_ID);
       expect(orderData).toContain('HTDResponseOrderData');
     });
+
+    it('should carry accessible account info through encrypt/decrypt', async () => {
+      const person = store.createPerson({ name: 'Acct Holder', country: 'DE' });
+      const account = store.createAccount({
+        personId: person.id,
+        iban: 'DE89370400440532013000',
+        accountNumber: '532013000',
+        currency: 'EUR',
+        name: 'Main Account',
+      });
+      store.grantAccountAccess(PARTNER_ID, account.id);
+
+      const initRes = await postEbics(
+        app,
+        buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'HTD'),
+      );
+      const { orderData } = decryptDownloadResponse(await initRes.text(), clientKeys.encKeyPair.privateKey);
+      expect(orderData).toContain('AccountInfo');
+      expect(orderData).toContain('DE89370400440532013000');
+    });
   });
 
   describe('HKD with multiple subscribers', () => {
