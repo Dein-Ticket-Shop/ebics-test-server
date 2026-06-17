@@ -295,6 +295,10 @@ export class SqliteStore implements AppStore {
     return this.rowToUploadedOrder(row);
   }
 
+  markUploadedOrderProcessed(id: number): void {
+    this.db.prepare('UPDATE uploaded_orders SET processed = 1 WHERE id = ?').run(id);
+  }
+
   private rowToUploadedOrder(row: Record<string, string | number | null>): UploadedOrder {
     return {
       id: row['id'] as number,

@@ -14,3 +14,16 @@ export function validateIban(iban: string): boolean {
   const numeric = rearranged.replace(/[A-Z]/g, (c) => String(c.charCodeAt(0) - 55));
   return BigInt(numeric) % 97n === 1n;
 }
+
+// SWIFT BIC: 6-letter bank + 2-char location (no 0/1 lead) + optional 3-char branch.
+// Same shape EBICS clients enforce, so a value that passes here also passes there.
+const BIC_RE = /^[A-Z]{6}[A-Z2-9][A-NP-Z0-9]([A-Z0-9]{3})?$/;
+
+export function validateBic(bic: string): boolean {
+  return BIC_RE.test(bic);
+}
+
+// German Bankleitzahl: exactly 8 digits.
+export function validateBlz(blz: string): boolean {
+  return /^\d{8}$/.test(blz);
+}

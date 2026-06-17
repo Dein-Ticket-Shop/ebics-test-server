@@ -4,6 +4,7 @@ import { dispatch, type DispatcherConfig } from '../protocol/dispatcher.js';
 import { validateXml, selectRequestValidator, selectResponseValidator } from '../protocol/xml-validator.js';
 import { ReturnCode } from '../protocol/return-codes.js';
 import { buildHevResponse } from '../protocol/xml-builder.js';
+import { logEbicsExchange, logError } from '../logger.js';
 
 export interface EbicsRouteConfig {
   dispatcher: DispatcherConfig;
@@ -67,7 +68,7 @@ export function createEbicsRoute(config: EbicsRouteConfig) {
           validateXml(result.responseXml, validatorName);
         }
       } catch (err) {
-        console.error('Response XSD validation failed (server bug):', err);
+        logError('response XSD validation (server bug)', err);
       }
     }
 
@@ -126,6 +127,17 @@ function logExchange(
       returnCode,
       requestXml,
       responseXml,
+      durationMs,
+    });
+
+    logEbicsExchange({
+      rootElement,
+      orderType,
+      partnerId,
+      userId,
+      transactionId,
+      transactionPhase,
+      returnCode,
       durationMs,
     });
   } catch {

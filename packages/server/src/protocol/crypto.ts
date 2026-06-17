@@ -35,12 +35,24 @@ export function generateTransactionKey(): Buffer {
 export function aesEncrypt(data: Buffer, key: Buffer): Buffer {
   const iv = Buffer.alloc(16, 0);
   const cipher = createCipheriv('aes-128-cbc', key, iv);
-  return Buffer.concat([cipher.update(data), cipher.final()]);
+  // EBICS (E002): NoPadding with zero fill to the block boundary, matching the
+  // decrypt side. The payload is always deflate-compressed first, so the zlib
+  // stream delimits the real data and the trailing zeros are ignored on inflate.
+  cipher.setAutoPadding(false);
+  const padLen = (16 - (data.length % 16)) % 16;
+  const padded = padLen > 0 ? Buffer.concat([data, Buffer.alloc(padLen, 0)]) : data;
+  return Buffer.concat([cipher.update(padded), cipher.final()]);
 }
 
 export function aesDecrypt(data: Buffer, key: Buffer): Buffer {
   const iv = Buffer.alloc(16, 0);
   const decipher = createDecipheriv('aes-128-cbc', key, iv);
+  // EBICS (E002) does not use PKCS#7 padding: the order data is padded to the
+  // block boundary with zero bytes and the cipher runs with NoPadding. Leaving
+  // Node's default PKCS#7 unpadding on rejects the client's last block
+  // ("bad decrypt"). We strip nothing here; the zlib stream that follows
+  // self-delimits, so trailing pad bytes after inflate are harmless.
+  decipher.setAutoPadding(false);
   return Buffer.concat([decipher.update(data), decipher.final()]);
 }
 

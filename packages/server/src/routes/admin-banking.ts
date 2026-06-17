@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppStore } from '../store/types.js';
-import { calculateIban } from '../banking/iban.js';
+import { calculateIban, validateBic, validateBlz } from '../banking/iban.js';
 import { generateCamt053 } from '../banking/generators/camt053.js';
 import { generateMt940 } from '../banking/generators/mt940.js';
 
@@ -17,6 +17,12 @@ export function createBankingAdminRoute(store: AppStore) {
 
   app.post('/bank', async (c) => {
     const body = await c.req.json<{ blz: string; name: string; bic: string }>();
+    if (!validateBlz(body.blz)) {
+      return c.json({ error: 'Invalid BLZ: must be 8 digits' }, 400);
+    }
+    if (!validateBic(body.bic)) {
+      return c.json({ error: 'Invalid BIC: must match SWIFT format (8 or 11 chars)' }, 400);
+    }
     store.setBankConfig(body);
     return c.json(body);
   });

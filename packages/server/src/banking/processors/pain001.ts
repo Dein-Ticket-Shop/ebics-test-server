@@ -1,8 +1,11 @@
 import type { AppStore } from '../../store/types.js';
 import { parseXml, xpathSelect, xpathString } from '../../protocol/xml-parser.js';
+import { logMoney, logError } from '../../logger.js';
+import { validateOrderData } from '../validation.js';
 
 export function processPain001(rawContent: string, store: AppStore): void {
   const doc = parseXml(rawContent);
+  validateOrderData(doc as unknown as Node);
 
   const pmtInfs = xpathSelect('//pain:PmtInf', doc, {
     pain: 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.09',
@@ -33,8 +36,9 @@ function processPmtInfs(pmtInfs: Node[], store: AppStore, ns: string): void {
     for (const txInf of txInfs) {
       try {
         processTransaction(txInf as Node, debtorIban, debtorAccount, store, ns);
-      } catch {
-        // skip individual failed transactions
+      } catch (err) {
+        // skip individual failed transactions, but make the failure visible
+        logError('pain.001 transaction', err);
       }
     }
   }
@@ -60,6 +64,8 @@ function processTransaction(
   const remittanceInfo = extractText(txInf, 'pain:RmtInf/pain:Ustrd', ns);
   const today = new Date().toISOString().slice(0, 10);
 
+  const debtorName = debtorAccount ? store.getPerson(debtorAccount.personId)?.name : undefined;
+
   if (debtorAccount) {
     store.createBooking({
       accountId: debtorAccount.id,
@@ -76,23 +82,32 @@ function processTransaction(
     });
   }
 
-  if (creditorIban) {
-    const creditorAccount = store.getAccountByIban(creditorIban);
-    if (creditorAccount) {
-      store.createBooking({
-        accountId: creditorAccount.id,
-        amountCents: amountCents,
-        currency: creditorAccount.currency,
-        valueDate: today,
-        bookingDate: today,
-        counterpartyName: debtorAccount ? store.getPerson(debtorAccount.personId)?.name : undefined,
-        counterpartyIban: debtorIban,
-        remittanceInfo,
-        endToEndId,
-        transactionCode: 'NTRF',
-      });
-    }
+  const creditorAccount = creditorIban ? store.getAccountByIban(creditorIban) : undefined;
+  if (creditorAccount) {
+    store.createBooking({
+      accountId: creditorAccount.id,
+      amountCents: amountCents,
+      currency: creditorAccount.currency,
+      valueDate: today,
+      bookingDate: today,
+      counterpartyName: debtorName,
+      counterpartyIban: debtorIban,
+      remittanceInfo,
+      endToEndId,
+      transactionCode: 'NTRF',
+    });
   }
+
+  const currency = debtorAccount?.currency ?? creditorAccount?.currency ?? 'EUR';
+  logMoney({
+    amountCents,
+    currency,
+    from: debtorName ?? debtorIban,
+    to: creditorName,
+    toIban: creditorIban,
+    remittance: remittanceInfo,
+    internal: Boolean(debtorAccount || creditorAccount),
+  });
 }
 
 function extractText(node: Node, xpath: string, ns: string): string | undefined {

@@ -3,6 +3,7 @@ import { createVerify, createHash } from 'node:crypto';
 import { XMLSerializer } from '@xmldom/xmldom';
 import type { XmlDocument } from './xml-parser.js';
 import forge from 'node-forge';
+import { logger } from '../logger.js';
 
 const c14n = new C14nCanonicalization();
 
@@ -62,11 +63,14 @@ export function verifyAuthSignature(doc: XmlDocument, publicKeyPem: string): boo
 
   const computedDigest = createHash('sha256').update(canonicalized).digest('base64');
   if (computedDigest !== expectedDigest) {
-    console.error('[AuthSig] Digest mismatch:');
-    console.error('  expected:', expectedDigest);
-    console.error('  computed:', computedDigest);
-    console.error('  authNodes:', authNodes.length);
-    console.error('  canonicalized (first 500):', canonicalized.slice(0, 500));
+    logger.debug({
+      evt: 'authsig',
+      reason: 'digest_mismatch',
+      expectedDigest,
+      computedDigest,
+      authNodes: authNodes.length,
+      canonicalized: canonicalized.slice(0, 500),
+    }, 'AuthSignature digest mismatch');
     return false;
   }
 
@@ -84,8 +88,11 @@ export function verifyAuthSignature(doc: XmlDocument, publicKeyPem: string): boo
   verifier.update(signedInfoC14n);
   const sigResult = verifier.verify(publicKeyPem, signatureValue, 'base64');
   if (!sigResult) {
-    console.error('[AuthSig] Signature verification failed');
-    console.error('  signedInfoC14n (first 500):', signedInfoC14n.slice(0, 500));
+    logger.debug({
+      evt: 'authsig',
+      reason: 'verify_failed',
+      signedInfoC14n: signedInfoC14n.slice(0, 500),
+    }, 'AuthSignature verification failed');
   }
   return sigResult;
 }

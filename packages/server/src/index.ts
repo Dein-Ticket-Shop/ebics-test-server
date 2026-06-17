@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server';
 import { createApp } from './server.js';
+import { logServer } from './logger.js';
 
 const HOST_ID = process.env['EBICS_HOST_ID'] ?? 'TESTHOST';
 const PORT = parseInt(process.env['PORT'] ?? '4150', 10);
@@ -15,8 +16,7 @@ const app = createApp({
 });
 
 serve({ fetch: app.fetch, port: PORT }, (info) => {
-  console.log(`EBICS test server running on http://localhost:${info.port}`);
-  console.log(`Host ID: ${HOST_ID}`);
-  console.log(`EBICS endpoint: POST http://localhost:${info.port}/ebics`);
-  console.log(`DB: ${DB_PATH}`);
+  logServer(`EBICS test server running on http://localhost:${info.port}`);
+  logServer(`Host ID: ${HOST_ID}  |  endpoint: POST http://localhost:${info.port}/ebics`);
+  logServer(`DB: ${DB_PATH}`);
 });

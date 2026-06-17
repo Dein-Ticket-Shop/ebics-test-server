@@ -148,6 +148,7 @@ export interface EbicsStore {
   createUploadedOrder(data: Omit<UploadedOrder, 'id' | 'processed' | 'createdAt'>): UploadedOrder;
   listUploadedOrders(): UploadedOrder[];
   getUploadedOrder(id: number): UploadedOrder | undefined;
+  markUploadedOrderProcessed(id: number): void;
 
   reset(): void;
 }

@@ -91,6 +91,14 @@ All settings are read from the environment:
 | `EBICS_HOST_ID`            | `TESTHOST`       | EBICS host ID                                |
 | `EBICS_DB_PATH`            | `./ebics-test.db`| SQLite file, or `:memory:` for ephemeral runs |
 | `EBICS_ALLOW_PREACTIVATION`| `false`          | Allow HPB before the subscriber is activated |
+| `EBICS_STRICT_VALIDATION`  | `true`           | Reject uploads with malformed IBAN or BIC (returns `090004`); set `false` to relax |
+| `EBICS_LOG_LEVEL`          | `info`           | Log level (`trace`..`fatal`, or `silent`)    |
+| `EBICS_QUIET`              | `false`          | Shorthand for `silent` logging               |
+| `EBICS_LOG_JSON`           | unset            | Force raw JSON logs (no pretty printing)      |
+
+The server logs one concise line per EBICS exchange, plus highlights when money
+moves and when anything fails. Logging uses pino, so set `EBICS_LOG_JSON=1` for
+structured output you can ship or grep.
 
 ## Tests
 

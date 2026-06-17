@@ -100,12 +100,15 @@ describe('crypto', () => {
   });
 
   describe('aesEncrypt / aesDecrypt', () => {
-    it('should round-trip data correctly', () => {
+    it('should round-trip data correctly (EBICS NoPadding, zero-filled)', () => {
       const key = generateTransactionKey();
       const data = Buffer.from('EBICS order data payload');
       const encrypted = aesEncrypt(data, key);
       const decrypted = aesDecrypt(encrypted, key);
-      expect(decrypted).toEqual(data);
+      // E002 uses NoPadding + zero fill: the original bytes are the prefix of a
+      // block-aligned buffer (any trailing zeros are stripped later by inflate).
+      expect(decrypted.length % 16).toBe(0);
+      expect(decrypted.subarray(0, data.length)).toEqual(data);
     });
 
     it('should produce different ciphertext than plaintext', () => {
@@ -138,12 +141,15 @@ describe('crypto', () => {
       expect(decrypted).toEqual(data);
     });
 
-    it('should fail to decrypt with wrong key', () => {
+    it('should not recover the plaintext with a wrong key', () => {
       const key1 = generateTransactionKey();
       const key2 = generateTransactionKey();
       const data = Buffer.from('secret');
       const encrypted = aesEncrypt(data, key1);
-      expect(() => aesDecrypt(encrypted, key2)).toThrow();
+      // NoPadding has no integrity check, so a wrong key yields garbage rather
+      // than throwing; the corruption surfaces later when inflate fails.
+      const decrypted = aesDecrypt(encrypted, key2);
+      expect(decrypted.subarray(0, data.length)).not.toEqual(data);
     });
   });
 

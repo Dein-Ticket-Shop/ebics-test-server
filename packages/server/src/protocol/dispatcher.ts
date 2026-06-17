@@ -23,6 +23,7 @@ import { handlePub } from '../handlers/pub.js';
 import { handleHca as handleHcaKeyMgmt } from '../handlers/hca.js';
 import { handleHcs } from '../handlers/hcs.js';
 import { decryptUpload } from './upload-pipeline.js';
+import { logError } from '../logger.js';
 
 export interface DispatcherConfig {
   hostId: string;
@@ -406,6 +407,63 @@ function handleUploadInit(
   };
 }
 
+/**
+ * Decrypt the accumulated upload, hand it to the matching order handler, and
+ * clear the transaction. Returns the business return code.
+ *
+ * For EBICS uploads there is no client Receipt phase (that is download-only),
+ * so this runs when the last Transfer segment arrives. We keep the Receipt
+ * branch wired to the same logic for any client that does send one.
+ */
+function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
+  const hostConfig = store.getHostConfig();
+  if (!hostConfig) {
+    return ReturnCode.EBICS_INTERNAL_ERROR;
+  }
+
+  let businessCode = ReturnCode.EBICS_OK;
+  try {
+    const tx = store.getTransaction(transactionId);
+    if (tx && tx.segments.length > 0) {
+      const rawContent = decryptUpload(
+        tx.segments,
+        tx.transactionKey,
+        hostConfig.bankKeys.encryptionPrivateKey,
+      );
+      const subscriber = store.getSubscriber(tx.partnerId, tx.userId);
+      const sub = subscriber ?? { partnerId: tx.partnerId, userId: tx.userId } as Subscriber;
+
+      switch (tx.orderType) {
+        case 'PUB':
+          businessCode = handlePub(rawContent, sub, store);
+          break;
+        case 'HCA':
+          businessCode = handleHcaKeyMgmt(rawContent, sub, store);
+          break;
+        case 'HCS':
+          businessCode = handleHcs(rawContent, sub, store);
+          break;
+        default:
+          businessCode = handleBtu(
+            rawContent,
+            tx.serviceName ?? tx.orderType,
+            tx.msgName,
+            sub,
+            store,
+          );
+          break;
+      }
+    }
+  } catch (err) {
+    const tx = store.getTransaction(transactionId);
+    logError(`upload processing (${tx?.orderType ?? 'unknown'})`, err);
+    businessCode = ReturnCode.EBICS_PROCESSING_ERROR;
+  }
+
+  store.deleteTransaction(transactionId);
+  return businessCode;
+}
+
 function handleUploadContinuation(
   ctx: HandlerContext,
   config: DispatcherConfig,
@@ -416,51 +474,7 @@ function handleUploadContinuation(
   const { store } = config;
 
   if (phase === 'Receipt') {
-    const hostConfig = store.getHostConfig();
-    if (!hostConfig) {
-      store.deleteTransaction(transactionId);
-      return errorResponse(ReturnCode.EBICS_INTERNAL_ERROR, 'Receipt');
-    }
-
-    let businessCode = ReturnCode.EBICS_OK;
-    try {
-      const refreshedTx = store.getTransaction(transactionId);
-      if (refreshedTx && refreshedTx.segments.length > 0) {
-        const rawContent = decryptUpload(
-          refreshedTx.segments,
-          refreshedTx.transactionKey,
-          hostConfig.bankKeys.encryptionPrivateKey,
-        );
-        const subscriber = store.getSubscriber(refreshedTx.partnerId, refreshedTx.userId);
-        const sub = subscriber ?? { partnerId: refreshedTx.partnerId, userId: refreshedTx.userId } as Subscriber;
-
-        switch (refreshedTx.orderType) {
-          case 'PUB':
-            businessCode = handlePub(rawContent, sub, store);
-            break;
-          case 'HCA':
-            businessCode = handleHcaKeyMgmt(rawContent, sub, store);
-            break;
-          case 'HCS':
-            businessCode = handleHcs(rawContent, sub, store);
-            break;
-          default:
-            businessCode = handleBtu(
-              rawContent,
-              refreshedTx.serviceName ?? refreshedTx.orderType,
-              refreshedTx.msgName,
-              sub,
-              store,
-            );
-            break;
-        }
-      }
-    } catch {
-      businessCode = ReturnCode.EBICS_PROCESSING_ERROR;
-    }
-
-    store.deleteTransaction(transactionId);
-
+    const businessCode = finalizeUpload(store, transactionId);
     return buildEbicsResponse({
       technicalCode: ReturnCode.EBICS_OK,
       businessCode,
@@ -479,13 +493,18 @@ function handleUploadContinuation(
 
   const segmentNumberStr = xpathString('//ebics:mutable/ebics:SegmentNumber/text()', ctx.doc);
   const segmentNumber = segmentNumberStr ? parseInt(segmentNumberStr, 10) : tx.currentSegment + 1;
+  const lastSegment = segmentNumber >= tx.numSegments;
+
+  // EBICS uploads carry no Receipt phase: process the order as soon as the last
+  // segment lands and return the business result in this Transfer response.
+  const businessCode = lastSegment ? finalizeUpload(store, transactionId) : ReturnCode.EBICS_OK;
 
   return buildEbicsResponse({
     technicalCode: ReturnCode.EBICS_OK,
-    businessCode: ReturnCode.EBICS_OK,
+    businessCode,
     transactionId,
     transactionPhase: 'Transfer',
     segmentNumber,
-    lastSegment: segmentNumber >= tx.numSegments,
+    lastSegment,
   });
 }
