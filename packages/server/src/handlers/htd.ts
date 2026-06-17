@@ -1,40 +1,34 @@
 import { create } from 'xmlbuilder2';
 import type { HandlerContext } from './handler-types.js';
-import type { Subscriber, HostConfig, EbicsStore } from '../store/types.js';
+import type { Subscriber, HostConfig, AppStore } from '../store/types.js';
 import { EBICS_NS } from '../protocol/constants.js';
-
-const SUPPORTED_ORDER_TYPES = ['HPD', 'HTD', 'HKD', 'HAA', 'HAC', 'BTD'];
+import {
+  buildPartnerInfo,
+  buildUserPermissions,
+  userStatusFromState,
+  SUPPORTED_ORDER_TYPES,
+} from './partner-info.js';
 
 export function handleHtd(
   _ctx: HandlerContext,
   subscriber: Subscriber,
   hostConfig: HostConfig,
-  _store: EbicsStore,
+  store: AppStore,
 ): string {
+  const accounts = store.listAccountsForPartner(subscriber.partnerId);
+
   const root = create({ version: '1.0', encoding: 'UTF-8' })
     .ele(EBICS_NS.H005, 'HTDResponseOrderData');
 
-  const partnerInfo = root.ele(EBICS_NS.H005, 'PartnerInfo');
-  const addressInfo = partnerInfo.ele(EBICS_NS.H005, 'AddressInfo');
-  addressInfo.ele(EBICS_NS.H005, 'Name').txt('Test Partner');
-
-  const bankInfo = partnerInfo.ele(EBICS_NS.H005, 'BankInfo');
-  bankInfo.ele(EBICS_NS.H005, 'HostID').txt(hostConfig.hostId);
-
-  for (const ot of SUPPORTED_ORDER_TYPES) {
-    const orderInfo = partnerInfo.ele(EBICS_NS.H005, 'OrderInfo');
-    orderInfo.ele(EBICS_NS.H005, 'AdminOrderType').txt(ot);
-    orderInfo.ele(EBICS_NS.H005, 'Description').txt(`${ot} order type`);
-  }
+  buildPartnerInfo(root, subscriber.partnerId, hostConfig, accounts, SUPPORTED_ORDER_TYPES);
 
   const userInfo = root.ele(EBICS_NS.H005, 'UserInfo');
-  userInfo.ele(EBICS_NS.H005, 'UserID').att('Status', '1').txt(subscriber.userId);
+  userInfo
+    .ele(EBICS_NS.H005, 'UserID')
+    .att('Status', userStatusFromState(subscriber.state))
+    .txt(subscriber.userId);
   userInfo.ele(EBICS_NS.H005, 'Name').txt(subscriber.userId);
-
-  for (const ot of SUPPORTED_ORDER_TYPES) {
-    const perm = userInfo.ele(EBICS_NS.H005, 'Permission');
-    perm.ele(EBICS_NS.H005, 'AdminOrderType').txt(ot);
-  }
+  buildUserPermissions(userInfo, SUPPORTED_ORDER_TYPES);
 
   return root.end({ prettyPrint: true });
 }

@@ -101,6 +101,45 @@ describe('Download Handlers', () => {
       const xml = handleHtd(makeCtx(), testSubscriber, testHostConfig, store);
       expect(() => parseXml(xml)).not.toThrow();
     });
+
+    it('should report the partner ID as the address name', () => {
+      const xml = handleHtd(makeCtx(), testSubscriber, testHostConfig, store);
+      expect(xml).toContain('PARTNER1');
+    });
+
+    it('should derive UserID status from subscriber state', () => {
+      const xml = handleHtd(makeCtx(), testSubscriber, testHostConfig, store);
+      expect(xml).toMatch(/<UserID[^>]*Status="1"/);
+
+      const newSub = { ...testSubscriber, state: SubscriberState.NEW };
+      const newXml = handleHtd(makeCtx(), newSub, testHostConfig, store);
+      expect(newXml).toMatch(/<UserID[^>]*Status="0"/);
+    });
+
+    it('should include a BTF Service for the BTD order type', () => {
+      const xml = handleHtd(makeCtx(), testSubscriber, testHostConfig, store);
+      expect(xml).toContain('Service');
+      expect(xml).toContain('ServiceName');
+      expect(xml).toContain('camt.053');
+    });
+
+    it('should include AccountInfo for accounts the partner can access', () => {
+      const person = store.createPerson({ name: 'Acct Holder', country: 'DE' });
+      const account = store.createAccount({
+        personId: person.id,
+        iban: 'DE89370400440532013000',
+        accountNumber: '532013000',
+        currency: 'EUR',
+        name: 'Main Account',
+      });
+      store.grantAccountAccess(testSubscriber.partnerId, account.id);
+
+      const xml = handleHtd(makeCtx(), testSubscriber, testHostConfig, store);
+      expect(xml).toContain('AccountInfo');
+      expect(xml).toContain('DE89370400440532013000');
+      expect(xml).toContain('international="true"');
+      expect(xml).toContain('Main Account');
+    });
   });
 
   describe('HKD', () => {
