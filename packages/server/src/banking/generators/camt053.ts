@@ -66,29 +66,23 @@ function addEntry(parent: any, booking: Booking) {
   }
 }
 
-export function generateCamt053(
-  account: Account,
-  person: Person,
-  bankConfig: BankConfig,
-  bookings: Booking[],
-  openingBalanceCents: number,
-  fromDate: string,
-  toDate: string,
-): string {
-  const closingBalanceCents = openingBalanceCents + bookings.reduce((s, b) => s + b.amountCents, 0);
-  const msgId = `STMT-${account.iban}-${Date.now()}`;
-  const now = new Date().toISOString();
+/** Input for one camt.053 <Stmt> block (one account). */
+export interface StatementInput {
+  account: Account;
+  person: Person;
+  bankConfig: BankConfig;
+  bookings: Booking[];
+  openingBalanceCents: number;
+}
 
-  const doc = create({ version: '1.0', encoding: 'UTF-8' });
-  const root = doc.ele(NS, 'Document');
-  const stmt = root.ele(NS, 'BkToCstmrStmt');
+/** Appends one <Stmt> (single account) under the BkToCstmrStmt parent. */
+function addStatement(parent: any, input: StatementInput, fromDate: string, toDate: string, now: string) {
+  const { account, person, bankConfig, bookings, openingBalanceCents } = input;
+  const closingBalanceCents = openingBalanceCents + bookings.reduce((sum, b) => sum + b.amountCents, 0);
+  const stmtId = `STMT-${account.iban}-${Date.now()}`;
 
-  const grpHdr = stmt.ele(NS, 'GrpHdr');
-  grpHdr.ele(NS, 'MsgId').txt(msgId);
-  grpHdr.ele(NS, 'CreDtTm').txt(now);
-
-  const s = stmt.ele(NS, 'Stmt');
-  s.ele(NS, 'Id').txt(msgId);
+  const s = parent.ele(NS, 'Stmt');
+  s.ele(NS, 'Id').txt(stmtId);
   s.ele(NS, 'ElctrncSeqNb').txt('1');
   s.ele(NS, 'CreDtTm').txt(now);
 
@@ -108,6 +102,48 @@ export function generateCamt053(
   for (const booking of bookings) {
     addEntry(s, booking);
   }
+}
+
+/**
+ * Generate a camt.053 document containing one <Stmt> per account. A single
+ * BkToCstmrStmt legitimately carries multiple statements, so all accounts the
+ * subscriber can see are reported in one valid document.
+ */
+export function generateCamt053Multi(
+  statements: StatementInput[],
+  fromDate: string,
+  toDate: string,
+): string {
+  const now = new Date().toISOString();
+
+  const doc = create({ version: '1.0', encoding: 'UTF-8' });
+  const root = doc.ele(NS, 'Document');
+  const bkToCstmr = root.ele(NS, 'BkToCstmrStmt');
+
+  const grpHdr = bkToCstmr.ele(NS, 'GrpHdr');
+  grpHdr.ele(NS, 'MsgId').txt(`STMT-${Date.now()}`);
+  grpHdr.ele(NS, 'CreDtTm').txt(now);
+
+  for (const input of statements) {
+    addStatement(bkToCstmr, input, fromDate, toDate, now);
+  }
 
   return doc.end({ prettyPrint: true });
+}
+
+/** Generate a camt.053 document for a single account. */
+export function generateCamt053(
+  account: Account,
+  person: Person,
+  bankConfig: BankConfig,
+  bookings: Booking[],
+  openingBalanceCents: number,
+  fromDate: string,
+  toDate: string,
+): string {
+  return generateCamt053Multi(
+    [{ account, person, bankConfig, bookings, openingBalanceCents }],
+    fromDate,
+    toDate,
+  );
 }

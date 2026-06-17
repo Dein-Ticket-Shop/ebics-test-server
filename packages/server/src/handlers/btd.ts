@@ -1,7 +1,7 @@
 import type { HandlerContext } from './handler-types.js';
 import type { Subscriber, HostConfig, AppStore } from '../store/types.js';
 import { xpathString } from '../protocol/xml-parser.js';
-import { generateCamt053 } from '../banking/generators/camt053.js';
+import { generateCamt053Multi, type StatementInput } from '../banking/generators/camt053.js';
 import { generateMt940 } from '../banking/generators/mt940.js';
 
 export function handleBtd(
@@ -67,8 +67,7 @@ function generateCamt053ForAccounts(
   fromDate: string,
   toDate: string,
 ): string | null {
-  let hasAny = false;
-  const parts: string[] = [];
+  const statements: StatementInput[] = [];
 
   for (const account of accounts) {
     const person = store.getPerson(account.personId);
@@ -77,13 +76,11 @@ function generateCamt053ForAccounts(
     const bookings = store.listBookingsForAccount(account.id, fromDate, toDate);
     const openingBalance = store.getOpeningBalanceCents(account.id, fromDate);
 
-    parts.push(generateCamt053(account, person, bankConfig, bookings, openingBalance, fromDate, toDate));
-    hasAny = true;
+    statements.push({ account, person, bankConfig, bookings, openingBalanceCents: openingBalance });
   }
 
-  if (!hasAny) return null;
-  if (parts.length === 1) return parts[0];
-  return parts[0];
+  if (statements.length === 0) return null;
+  return generateCamt053Multi(statements, fromDate, toDate);
 }
 
 function generateMt940ForAccounts(

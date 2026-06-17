@@ -261,6 +261,44 @@ describe('Banking', () => {
       await postEbics(app, buildEbicsReceiptRequest(HOST_ID, clientKeys, transactionId));
     });
 
+    it('should report every accessible account in one camt.053 document', async () => {
+      // Add a second account for the partner with its own booking.
+      const person = store.createPerson({ name: 'Second Holder', country: 'DE' });
+      const second = store.createAccount({
+        personId: person.id,
+        iban: 'DE02100200300000000099',
+        accountNumber: '99',
+        currency: 'EUR',
+        name: 'Second Account',
+      });
+      store.grantAccountAccess(PARTNER_ID, second.id);
+      store.createBooking({
+        accountId: second.id, amountCents: 100000, currency: 'EUR',
+        valueDate: new Date().toISOString().slice(0, 10),
+        bookingDate: new Date().toISOString().slice(0, 10),
+        counterpartyName: 'Other GmbH', transactionCode: 'NTRF',
+      });
+
+      const firstIban = store.listAccountsForPartner(PARTNER_ID).find((a) => a.id !== second.id)!.iban;
+
+      const initRes = await postEbics(
+        app,
+        buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'BTD', {
+          serviceName: 'STA',
+          msgName: 'camt.053',
+        }),
+      );
+      const { orderData, transactionId } = decryptDownloadResponse(await initRes.text(), clientKeys.encKeyPair.privateKey);
+
+      // One valid document, one BkToCstmrStmt, two <Stmt> — both IBANs present.
+      expect(orderData.match(/<BkToCstmrStmt>/g)).toHaveLength(1);
+      expect(orderData.match(/<Stmt>/g)).toHaveLength(2);
+      expect(orderData).toContain(firstIban);
+      expect(orderData).toContain(second.iban);
+
+      await postEbics(app, buildEbicsReceiptRequest(HOST_ID, clientKeys, transactionId));
+    });
+
     it('should download MT940 via BTD', async () => {
       const initRes = await postEbics(
         app,
