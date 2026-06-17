@@ -201,6 +201,12 @@ export function buildHpbRequest(
   for (const n of authNodes) {
     canonicalized += c14n.process(n);
   }
+  // Inclusive C14n re-declares the in-scope `ds` prefix at the apex; mirror the server's
+  // fixup so client and server digest byte-identical forms (matches node-ebics-client).
+  canonicalized = canonicalized.replace(
+    /xmlns="urn:org:ebics:H005"/g,
+    'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+  );
 
   const digest = createHash('sha256').update(canonicalized).digest('base64');
 
@@ -209,7 +215,14 @@ export function buildHpbRequest(
 
   // Canonicalize SignedInfo for signing
   const signedInfoDoc = new DOMParser().parseFromString(signedInfoXml, 'text/xml');
-  const signedInfoC14n = c14n.process(signedInfoDoc.documentElement as unknown as Node);
+  // The H005 default namespace is in scope from the request root, so inclusive C14n
+  // re-declares it on the SignedInfo apex; mirror the server's fixup before signing.
+  const signedInfoC14n = c14n
+    .process(signedInfoDoc.documentElement as unknown as Node)
+    .replace(
+      'xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+      'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+    );
 
   const signer = createSign('RSA-SHA256');
   signer.update(signedInfoC14n);
@@ -259,13 +272,26 @@ function signEbicsRequest(xml: string, privateKey: string): string {
   for (const n of authNodes) {
     canonicalized += c14n.process(n);
   }
+  // Inclusive C14n re-declares the in-scope `ds` prefix at the apex; mirror the server's
+  // fixup so client and server digest byte-identical forms (matches node-ebics-client).
+  canonicalized = canonicalized.replace(
+    /xmlns="urn:org:ebics:H005"/g,
+    'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+  );
 
   const digest = createHash('sha256').update(canonicalized).digest('base64');
 
   const signedInfoXml = `<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#xpointer(//*[@authenticate='true'])"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>${digest}</ds:DigestValue></ds:Reference></ds:SignedInfo>`;
 
   const signedInfoDoc = new DOMParser().parseFromString(signedInfoXml, 'text/xml');
-  const signedInfoC14n = c14n.process(signedInfoDoc.documentElement as unknown as Node);
+  // The H005 default namespace is in scope from the request root, so inclusive C14n
+  // re-declares it on the SignedInfo apex; mirror the server's fixup before signing.
+  const signedInfoC14n = c14n
+    .process(signedInfoDoc.documentElement as unknown as Node)
+    .replace(
+      'xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+      'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
+    );
 
   const signer = createSign('RSA-SHA256');
   signer.update(signedInfoC14n);
@@ -346,6 +372,7 @@ export function decryptDownloadResponse(responseXml: string, encPrivateKeyPem: s
 
   const iv = Buffer.alloc(16, 0);
   const decipher = createDecipheriv('aes-128-cbc', transactionKey, iv);
+  decipher.setAutoPadding(false); // EBICS E002: zero-padded, no PKCS#7
   const encrypted = Buffer.from(orderDataB64, 'base64');
   const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
   const orderData = inflateSync(decrypted).toString('utf8');

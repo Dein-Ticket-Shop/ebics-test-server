@@ -41,6 +41,7 @@ async function setupReadySubscriber(
   );
   const iv = Buffer.alloc(16, 0);
   const decipher = createDecipheriv('aes-128-cbc', txKey, iv);
+  decipher.setAutoPadding(false); // EBICS E002: zero-padded, no PKCS#7
   const decrypted = Buffer.concat([
     decipher.update(Buffer.from(orderDataB64, 'base64')),
     decipher.final(),
@@ -261,6 +262,7 @@ describe('Downloads', () => {
 
       const iv = Buffer.alloc(16, 0);
       const decipher = createDecipheriv('aes-128-cbc', transactionKey, iv);
+      decipher.setAutoPadding(false); // EBICS E002: zero-padded, no PKCS#7
       const fullEncrypted = Buffer.concat(encryptedParts);
       const decrypted = Buffer.concat([decipher.update(fullEncrypted), decipher.final()]);
       const result = inflateSync(decrypted).toString('utf8');

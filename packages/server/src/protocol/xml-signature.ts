@@ -50,12 +50,12 @@ export function verifyAuthSignature(doc: XmlDocument, publicKeyPem: string): boo
     canonicalized += c14n.process(n, {});
   }
 
-  // xml-crypto's C14nCanonicalization renders the in-scope default namespace on the
-  // detached apex node but omits in-scope prefix namespaces not visibly used inside the
-  // subtree (e.g. `ds`, declared on the request root). Inclusive C14n
-  // (REC-xml-c14n-20010315) requires re-declaring them at the apex, so the spec-correct
-  // client (@kage0x3b/ebics-client) injects `xmlns:ds` here. Mirror that fixup so our
-  // canonical form is byte-identical to the one the client digested.
+  // Inclusive C14n (REC-xml-c14n-20010315) re-declares ALL in-scope namespaces at the
+  // detached apex, even ones not visibly used inside the subtree (e.g. `ds`, declared on
+  // the request root). xml-crypto's C14nCanonicalization renders the in-scope default
+  // namespace but buggily omits in-scope prefix namespaces, so we re-inject `xmlns:ds`
+  // to reproduce the spec-correct canonical form. Verified byte-identical against real
+  // clients (node-ebics-client 6.0.0, @kage0x3b/ebics-client).
   canonicalized = canonicalized.replace(
     /xmlns="urn:org:ebics:H005"/g,
     'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
@@ -74,9 +74,10 @@ export function verifyAuthSignature(doc: XmlDocument, publicKeyPem: string): boo
     return false;
   }
 
-  // Verify signature: canonicalize SignedInfo, verify with RSA-SHA256.
-  // Same in-scope-namespace fixup as the digest: the client re-declares the default
-  // H005 namespace on the SignedInfo apex (in scope from the request root) before signing.
+  // Verify signature: canonicalize SignedInfo, verify with RSA-SHA256. Same in-scope
+  // namespace fixup as the digest: the default H005 namespace is in scope from the request
+  // root, so inclusive C14n re-declares it on the SignedInfo apex. xml-crypto omits it, so
+  // we inject it alongside the `ds` prefix it already renders.
   const signedInfoC14n = c14n
     .process(signedInfo as unknown as Node, {})
     .replace(
