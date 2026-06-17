@@ -1,9 +1,9 @@
 import type { AppStore } from '../../store/types.js';
 import { parseXml, xpathSelect, xpathString } from '../../protocol/xml-parser.js';
 import { logMoney, logError } from '../../logger.js';
-import { validateOrderData } from '../validation.js';
+import { validateOrderData, validateOrderingAccount } from '../validation.js';
 
-export function processPain001(rawContent: string, store: AppStore): void {
+export function processPain001(rawContent: string, store: AppStore, partnerId: string): void {
   const doc = parseXml(rawContent);
   validateOrderData(doc as unknown as Node);
 
@@ -16,18 +16,21 @@ export function processPain001(rawContent: string, store: AppStore): void {
       pain: 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.03',
     });
     if (Array.isArray(pmtInfsV3) && pmtInfsV3.length > 0) {
-      processPmtInfs(pmtInfsV3 as Node[], store, 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.03');
+      processPmtInfs(pmtInfsV3 as Node[], store, partnerId, 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.03');
       return;
     }
     return;
   }
 
-  processPmtInfs(pmtInfs as Node[], store, 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.09');
+  processPmtInfs(pmtInfs as Node[], store, partnerId, 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.09');
 }
 
-function processPmtInfs(pmtInfs: Node[], store: AppStore, ns: string): void {
+function processPmtInfs(pmtInfs: Node[], store: AppStore, partnerId: string, ns: string): void {
   for (const pmtInf of pmtInfs) {
+    // The debtor is the ordering party for a credit transfer — it must be an
+    // account held here that the uploading partner may draw on.
     const debtorIban = extractText(pmtInf, 'pain:DbtrAcct/pain:Id/pain:IBAN', ns);
+    validateOrderingAccount(store, partnerId, debtorIban, 'debtor');
     const debtorAccount = debtorIban ? store.getAccountByIban(debtorIban) : undefined;
 
     const txInfs = xpathSelect('pain:CdtTrfTxInf', pmtInf as any, { pain: ns });

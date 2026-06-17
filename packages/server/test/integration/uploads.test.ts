@@ -241,5 +241,65 @@ describe('Uploads', () => {
       const bobAccUpdated = store.getAccount(bobAcc.id)!;
       expect(bobAccUpdated.currentBalanceCents).toBe(50000); // +500
     });
+
+    it('should bounce pain.001 when the debtor account is unknown to this bank', async () => {
+      // Debtor IBAN belongs to no account here — strict mode rejects the file.
+      const foreignIban = calculateIban('10020030', '9999999999');
+
+      const pain001 = buildPain001(foreignIban, calculateIban('10020030', '8888888888'), '100.00');
+      const bankEncPubKey = getBankEncPubKey(store);
+      const enc = encryptUploadContent(pain001, bankEncPubKey, PARTNER_ID, USER_ID);
+
+      const initRes = await postEbics(app, buildEbicsUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SCT', 'pain.001', enc));
+      const txId = xpathString('//ebics:TransactionID/text()', parseXml(await initRes.text()))!;
+      // EBICS uploads carry the business result in the last Transfer response.
+      const transferRes = await postEbics(app, buildEbicsUploadTransferRequest(HOST_ID, clientKeys, txId, 1, true, enc.segments[0]));
+
+      // 091302 = EBICS_ACCOUNT_AUTHORISATION_FAILED
+      expect(await transferRes.text()).toContain('091302');
+      // No booking posted: the order was rejected, not partially applied.
+      expect(store.listUploadedOrders().every((o) => !o.processed)).toBe(true);
+    });
+
+    it('should bounce pain.001 when the partner is not authorised for the debtor account', async () => {
+      // Account exists here but PARTNER_ID was never granted access to it.
+      const stranger = store.createPerson({ name: 'Stranger', country: 'DE' });
+      const accNum = store.getNextAccountSequence().toString().padStart(10, '0');
+      const strangerIban = calculateIban('10020030', accNum);
+      const strangerAcc = store.createAccount({ personId: stranger.id, iban: strangerIban, accountNumber: accNum, currency: 'EUR', name: 'Stranger Konto' });
+      store.createBooking({ accountId: strangerAcc.id, amountCents: 1000000, currency: 'EUR', valueDate: '2025-01-01', bookingDate: '2025-01-01', transactionCode: 'NTRF' });
+
+      const pain001 = buildPain001(strangerIban, calculateIban('10020030', '8888888888'), '100.00');
+      const bankEncPubKey = getBankEncPubKey(store);
+      const enc = encryptUploadContent(pain001, bankEncPubKey, PARTNER_ID, USER_ID);
+
+      const initRes = await postEbics(app, buildEbicsUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SCT', 'pain.001', enc));
+      const txId = xpathString('//ebics:TransactionID/text()', parseXml(await initRes.text()))!;
+      const transferRes = await postEbics(app, buildEbicsUploadTransferRequest(HOST_ID, clientKeys, txId, 1, true, enc.segments[0]));
+
+      expect(await transferRes.text()).toContain('091302');
+      // Balance untouched — the debit was never applied.
+      expect(store.getAccount(strangerAcc.id)!.currentBalanceCents).toBe(1000000);
+    });
   });
 });
+
+function buildPain001(debtorIban: string, creditorIban: string, amount: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.09">
+  <CstmrCdtTrfInitn>
+    <GrpHdr><MsgId>MSG-AUTH</MsgId><CreDtTm>2025-06-01T10:00:00</CreDtTm><NbOfTxs>1</NbOfTxs><CtrlSum>${amount}</CtrlSum></GrpHdr>
+    <PmtInf>
+      <PmtInfId>PMT-AUTH</PmtInfId><PmtMtd>TRF</PmtMtd><NbOfTxs>1</NbOfTxs><CtrlSum>${amount}</CtrlSum>
+      <DbtrAcct><Id><IBAN>${debtorIban}</IBAN></Id></DbtrAcct>
+      <CdtTrfTxInf>
+        <PmtId><EndToEndId>E2E-AUTH</EndToEndId></PmtId>
+        <Amt><InstdAmt Ccy="EUR">${amount}</InstdAmt></Amt>
+        <Cdtr><Nm>Recipient</Nm></Cdtr>
+        <CdtrAcct><Id><IBAN>${creditorIban}</IBAN></Id></CdtrAcct>
+        <RmtInf><Ustrd>Test</Ustrd></RmtInf>
+      </CdtTrfTxInf>
+    </PmtInf>
+  </CstmrCdtTrfInitn>
+</Document>`;
+}

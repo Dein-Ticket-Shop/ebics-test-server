@@ -1,7 +1,7 @@
 import type { AppStore } from '../../store/types.js';
 import { parseXml, xpathSelect } from '../../protocol/xml-parser.js';
 import { logMoney, logError } from '../../logger.js';
-import { validateOrderData } from '../validation.js';
+import { validateOrderData, validateOrderingAccount } from '../validation.js';
 
 /**
  * Process a pain.008 SEPA Direct Debit (SDD): the creditor collects money from
@@ -10,7 +10,7 @@ import { validateOrderData } from '../validation.js';
  * Version-tolerant: matched by local element name, so pain.008.001.02 / .08 /
  * etc. all work without hard-coding a namespace.
  */
-export function processPain008(rawContent: string, store: AppStore): void {
+export function processPain008(rawContent: string, store: AppStore, partnerId: string): void {
   const doc = parseXml(rawContent);
   validateOrderData(doc as unknown as Node);
 
@@ -20,8 +20,11 @@ export function processPain008(rawContent: string, store: AppStore): void {
   for (const pmtInf of pmtInfs) {
     const node = pmtInf as Node;
     // Creditor sits at the PmtInf level and collects from every debit below it.
+    // For a direct debit the creditor is the ordering party — it must be an
+    // account held here that the uploading partner may collect into.
     const creditorName = lnText(node, "Cdtr/Nm");
     const creditorIban = lnText(node, "CdtrAcct/Id/IBAN");
+    validateOrderingAccount(store, partnerId, creditorIban, 'creditor');
     const creditorAccount = creditorIban ? store.getAccountByIban(creditorIban) : undefined;
 
     const txInfs = xpathSelect("./*[local-name()='DrctDbtTxInf']", node as any);

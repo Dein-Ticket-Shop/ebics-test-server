@@ -1,5 +1,6 @@
 import { xpathSelect } from '../protocol/xml-parser.js';
 import { validateIban, validateBic } from './iban.js';
+import type { AppStore } from '../store/types.js';
 
 /**
  * Thrown when an uploaded payment carries a malformed IBAN or BIC. The BTU
@@ -10,6 +11,43 @@ export class OrderDataError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'OrderDataError';
+  }
+}
+
+/**
+ * Thrown when the ordering party's account is unknown to this bank or the
+ * uploading partner is not authorised for it. The BTU handler maps it to
+ * EBICS_ACCOUNT_AUTHORISATION_FAILED (091302) — a real bank only books an order
+ * against an account it holds and the submitter is entitled to draw on.
+ */
+export class OrderAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OrderAuthError';
+  }
+}
+
+/**
+ * Validate the ordering party's own account: the debtor for a credit transfer
+ * (pain.001), the creditor for a direct debit (pain.008). Under strict mode the
+ * account must exist at this bank and the uploading partner must have access to
+ * it. The counterparty account lives at another bank and is deliberately NOT
+ * checked. No-op unless strict validation is enabled.
+ */
+export function validateOrderingAccount(
+  store: AppStore,
+  partnerId: string,
+  iban: string | undefined,
+  label: string,
+): void {
+  if (!isStrictValidation()) return;
+
+  const account = iban ? store.getAccountByIban(iban) : undefined;
+  if (!account) {
+    throw new OrderAuthError(`${label} account not held at this bank: ${iban ?? '(missing IBAN)'}`);
+  }
+  if (!store.partnerHasAccountAccess(partnerId, account.id)) {
+    throw new OrderAuthError(`partner ${partnerId} not authorised for ${label} account ${iban}`);
   }
 }
 

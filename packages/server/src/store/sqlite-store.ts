@@ -413,6 +413,13 @@ export class SqliteStore implements AppStore {
     return rows.map((r) => this.rowToAccount(r));
   }
 
+  partnerHasAccountAccess(partnerId: string, accountId: number): boolean {
+    const row = this.db.prepare(
+      'SELECT 1 FROM partner_account_access WHERE partner_id = ? AND account_id = ? LIMIT 1',
+    ).get(partnerId, accountId);
+    return row !== undefined;
+  }
+
   grantAccountAccess(partnerId: string, accountId: number): void {
     this.db.prepare('INSERT OR IGNORE INTO partner_account_access (partner_id, account_id) VALUES (?, ?)').run(partnerId, accountId);
   }

@@ -216,6 +216,7 @@ export interface BankingStore {
   listAccountsForPerson(personId: number): Account[];
   listAccountsForPartner(partnerId: string): Account[];
 
+  partnerHasAccountAccess(partnerId: string, accountId: number): boolean;
   grantAccountAccess(partnerId: string, accountId: number): void;
   revokeAccountAccess(partnerId: string, accountId: number): void;
 
