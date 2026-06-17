@@ -409,13 +409,28 @@ function handleUploadInit(
 
 /**
  * Decrypt the accumulated upload, hand it to the matching order handler, and
- * clear the transaction. Returns the business return code.
+ * return the business return code.
  *
- * For EBICS uploads there is no client Receipt phase (that is download-only),
- * so this runs when the last Transfer segment arrives. We keep the Receipt
- * branch wired to the same logic for any client that does send one.
+ * EBICS uploads carry the result in the response to the last Transfer segment;
+ * there is no mandatory client Receipt (that is download-only). We process the
+ * order on that last segment and then mark the transaction `Receipt` WITHOUT
+ * deleting it, so a defensive client that does send a trailing Receipt gets an
+ * idempotent acknowledgement instead of EBICS_TX_UNKNOWN_TXID. A second call for
+ * an already-finalized transaction is a no-op ack that clears the record; if no
+ * Receipt ever arrives, cleanExpiredTransactions reaps it.
  */
 function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
+  const tx = store.getTransaction(transactionId);
+  if (!tx) {
+    return ReturnCode.EBICS_OK;
+  }
+
+  // Already processed on the last Transfer — this is a trailing Receipt ack.
+  if (tx.phase === 'Receipt') {
+    store.deleteTransaction(transactionId);
+    return ReturnCode.EBICS_OK;
+  }
+
   const hostConfig = store.getHostConfig();
   if (!hostConfig) {
     return ReturnCode.EBICS_INTERNAL_ERROR;
@@ -423,8 +438,7 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
 
   let businessCode = ReturnCode.EBICS_OK;
   try {
-    const tx = store.getTransaction(transactionId);
-    if (tx && tx.segments.length > 0) {
+    if (tx.segments.length > 0) {
       const rawContent = decryptUpload(
         tx.segments,
         tx.transactionKey,
@@ -455,12 +469,12 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
       }
     }
   } catch (err) {
-    const tx = store.getTransaction(transactionId);
-    logError(`upload processing (${tx?.orderType ?? 'unknown'})`, err);
+    logError(`upload processing (${tx.orderType})`, err);
     businessCode = ReturnCode.EBICS_PROCESSING_ERROR;
   }
 
-  store.deleteTransaction(transactionId);
+  // Keep the record (marked finalized) to acknowledge an optional client Receipt.
+  store.updateTransactionPhase(transactionId, 'Receipt');
   return businessCode;
 }
 
