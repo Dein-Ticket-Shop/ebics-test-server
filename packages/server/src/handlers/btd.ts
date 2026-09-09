@@ -36,7 +36,8 @@ function tryDynamicGeneration(
   msgName: string | undefined,
   ctx: HandlerContext,
 ): string | null | undefined {
-  if (serviceName !== 'STA') return undefined;
+  // STA / EOP are both statement (End-of-Period) services; EOP is the camt.053 name.
+  if (serviceName !== 'STA' && serviceName !== 'EOP') return undefined;
   if (msgName !== 'camt.053' && msgName !== 'mt940') return undefined;
 
   const bankConfig = store.getBankConfig();

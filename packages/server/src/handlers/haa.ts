@@ -28,7 +28,7 @@ export function handleHaa(
 
   const partnerAccounts = store.listAccountsForPartner(subscriber.partnerId);
   if (partnerAccounts.length > 0) {
-    for (const [sn, mn] of [['STA', 'camt.053'], ['STA', 'mt940']] as const) {
+    for (const [sn, mn] of [['STA', 'camt.053'], ['STA', 'mt940'], ['EOP', 'camt.053']] as const) {
       const orderInfo = root.ele(EBICS_NS.H005, 'OrderInfo');
       orderInfo.ele(EBICS_NS.H005, 'AdminOrderType').txt('BTD');
       const service = orderInfo.ele(EBICS_NS.H005, 'Service');
