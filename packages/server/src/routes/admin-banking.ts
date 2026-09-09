@@ -57,6 +57,20 @@ export function createBankingAdminRoute(store: AppStore) {
     return c.json(person);
   });
 
+  app.patch('/persons/:id', async (c) => {
+    const id = parseInt(c.req.param('id'), 10);
+    if (!store.getPerson(id)) return c.json({ error: 'Not found' }, 404);
+    const body = await c.req.json<{
+      name?: string;
+      externalId?: string;
+      addressLine1?: string;
+      addressLine2?: string;
+      country?: string;
+    }>();
+    const person = store.updatePerson(id, body);
+    return c.json(person);
+  });
+
   app.delete('/persons/:id', (c) => {
     store.deletePerson(parseInt(c.req.param('id'), 10));
     return c.json({ status: 'deleted' });
@@ -99,6 +113,20 @@ export function createBankingAdminRoute(store: AppStore) {
     const account = store.getAccount(parseInt(c.req.param('id'), 10));
     if (!account) return c.json({ error: 'Not found' }, 404);
     return c.json(account);
+  });
+
+  app.patch('/accounts/:id', async (c) => {
+    const id = parseInt(c.req.param('id'), 10);
+    if (!store.getAccount(id)) return c.json({ error: 'Not found' }, 404);
+    // IBAN and account number are identity / derived — only the display name and currency are editable.
+    const body = await c.req.json<{ name?: string; currency?: string }>();
+    const account = store.updateAccount(id, { name: body.name, currency: body.currency });
+    return c.json(account);
+  });
+
+  app.delete('/accounts/:id', (c) => {
+    store.deleteAccount(parseInt(c.req.param('id'), 10));
+    return c.json({ status: 'deleted' });
   });
 
   app.get('/persons/:personId/accounts', (c) => {
@@ -162,6 +190,11 @@ export function createBankingAdminRoute(store: AppStore) {
       transactionCode: body.transactionCode ?? 'NTRF',
     });
     return c.json(booking, 201);
+  });
+
+  app.delete('/accounts/:id/bookings/:bookingId', (c) => {
+    store.deleteBooking(parseInt(c.req.param('bookingId'), 10));
+    return c.json({ status: 'deleted' });
   });
 
   // Statement preview

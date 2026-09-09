@@ -153,6 +153,128 @@ describe('Banking', () => {
       expect(accounts[0].iban).toBe(iban);
     });
 
+    it('should patch person fields', async () => {
+      const person = store.createPerson({ name: 'Old Name', country: 'DE', externalId: 'p1' });
+
+      const res = await app.request(`/api/banking/persons/${person.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'New Name', addressLine1: 'Hauptstr. 1', country: 'AT' }),
+      });
+      expect(res.status).toBe(200);
+      const updated = await res.json();
+      expect(updated.name).toBe('New Name');
+      expect(updated.addressLine1).toBe('Hauptstr. 1');
+      expect(updated.country).toBe('AT');
+      // untouched field preserved
+      expect(updated.externalId).toBe('p1');
+      expect(store.getPerson(person.id)!.name).toBe('New Name');
+    });
+
+    it('should 404 when patching an unknown person', async () => {
+      const res = await app.request('/api/banking/persons/9999', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'x' }),
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('should patch account name and currency but not IBAN', async () => {
+      store.setBankConfig({ blz: '10020030', name: 'Test Bank', bic: 'TESTDEFFXXX' });
+      const person = store.createPerson({ name: 'Test', country: 'DE' });
+      const iban = calculateIban('10020030', '0000000001');
+      const account = store.createAccount({
+        personId: person.id, iban, accountNumber: '0000000001',
+        currency: 'EUR', name: 'Old Account',
+      });
+
+      const res = await app.request(`/api/banking/accounts/${account.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'New Account', currency: 'CHF', iban: 'DE00000000000000000000' }),
+      });
+      expect(res.status).toBe(200);
+      const updated = await res.json();
+      expect(updated.name).toBe('New Account');
+      expect(updated.currency).toBe('CHF');
+      // IBAN is immutable — the bogus value in the body is ignored
+      expect(updated.iban).toBe(iban);
+    });
+
+    it('should delete a booking and reverse its balance contribution', async () => {
+      store.setBankConfig({ blz: '10020030', name: 'Test Bank', bic: 'TESTDEFFXXX' });
+      const person = store.createPerson({ name: 'Test', country: 'DE' });
+      const iban = calculateIban('10020030', '0000000001');
+      const account = store.createAccount({
+        personId: person.id, iban, accountNumber: '0000000001',
+        currency: 'EUR', name: 'Test Account',
+      });
+      const credit = store.createBooking({
+        accountId: account.id, amountCents: 100000, currency: 'EUR',
+        valueDate: '2026-06-01', bookingDate: '2026-06-01', transactionCode: 'NTRF',
+      });
+      store.createBooking({
+        accountId: account.id, amountCents: -30000, currency: 'EUR',
+        valueDate: '2026-06-02', bookingDate: '2026-06-02', transactionCode: 'NTRF',
+      });
+      expect(store.getAccount(account.id)!.currentBalanceCents).toBe(70000);
+
+      const res = await app.request(`/api/banking/accounts/${account.id}/bookings/${credit.id}`, { method: 'DELETE' });
+      expect(res.status).toBe(200);
+
+      // 100000 credit removed → balance drops to -30000
+      expect(store.getAccount(account.id)!.currentBalanceCents).toBe(-30000);
+      expect(store.listBookingsForAccount(account.id)).toHaveLength(1);
+    });
+
+    it('should delete an account along with its bookings and partner access', async () => {
+      store.setBankConfig({ blz: '10020030', name: 'Test Bank', bic: 'TESTDEFFXXX' });
+      const person = store.createPerson({ name: 'Test', country: 'DE' });
+      const iban = calculateIban('10020030', '0000000001');
+      const account = store.createAccount({
+        personId: person.id, iban, accountNumber: '0000000001',
+        currency: 'EUR', name: 'Test Account',
+      });
+      store.createBooking({
+        accountId: account.id, amountCents: 100000, currency: 'EUR',
+        valueDate: '2025-06-01', bookingDate: '2025-06-01', transactionCode: 'NTRF',
+      });
+      store.grantAccountAccess('PARTNER1', account.id);
+
+      const res = await app.request(`/api/banking/accounts/${account.id}`, { method: 'DELETE' });
+      expect(res.status).toBe(200);
+
+      expect(store.getAccount(account.id)).toBeUndefined();
+      expect(store.listBookingsForAccount(account.id)).toHaveLength(0);
+      expect(store.partnerHasAccountAccess('PARTNER1', account.id)).toBe(false);
+      // person remains
+      expect(store.getPerson(person.id)).toBeDefined();
+    });
+
+    it('should delete a person and cascade to their accounts and bookings', async () => {
+      store.setBankConfig({ blz: '10020030', name: 'Test Bank', bic: 'TESTDEFFXXX' });
+      const person = store.createPerson({ name: 'Test', country: 'DE' });
+      const iban = calculateIban('10020030', '0000000001');
+      const account = store.createAccount({
+        personId: person.id, iban, accountNumber: '0000000001',
+        currency: 'EUR', name: 'Test Account',
+      });
+      store.createBooking({
+        accountId: account.id, amountCents: 100000, currency: 'EUR',
+        valueDate: '2025-06-01', bookingDate: '2025-06-01', transactionCode: 'NTRF',
+      });
+      store.grantAccountAccess('PARTNER1', account.id);
+
+      const res = await app.request(`/api/banking/persons/${person.id}`, { method: 'DELETE' });
+      expect(res.status).toBe(200);
+
+      expect(store.getPerson(person.id)).toBeUndefined();
+      expect(store.getAccount(account.id)).toBeUndefined();
+      expect(store.listBookingsForAccount(account.id)).toHaveLength(0);
+      expect(store.partnerHasAccountAccess('PARTNER1', account.id)).toBe(false);
+    });
+
     it('should seed demo data', async () => {
       const res = await app.request('/api/banking/seed/demo', { method: 'POST' });
       expect(res.status).toBe(200);

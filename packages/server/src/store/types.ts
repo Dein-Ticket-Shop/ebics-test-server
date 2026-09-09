@@ -207,6 +207,7 @@ export interface BankingStore {
   getPerson(id: number): Person | undefined;
   getPersonByExternalId(externalId: string): Person | undefined;
   listPersons(): Person[];
+  updatePerson(id: number, patch: Partial<Omit<Person, 'id' | 'createdAt'>>): Person | undefined;
   deletePerson(id: number): void;
 
   createAccount(data: Omit<Account, 'id' | 'currentBalanceCents' | 'createdAt'>): Account;
@@ -215,6 +216,8 @@ export interface BankingStore {
   listAccounts(): Account[];
   listAccountsForPerson(personId: number): Account[];
   listAccountsForPartner(partnerId: string): Account[];
+  updateAccount(id: number, patch: { name?: string; currency?: string }): Account | undefined;
+  deleteAccount(id: number): void;
 
   partnerHasAccountAccess(partnerId: string, accountId: number): boolean;
   grantAccountAccess(partnerId: string, accountId: number): void;
@@ -222,6 +225,7 @@ export interface BankingStore {
 
   createBooking(data: Omit<Booking, 'id' | 'createdAt'>): Booking;
   listBookingsForAccount(accountId: number, fromDate?: string, toDate?: string): Booking[];
+  deleteBooking(id: number): void;
   getOpeningBalanceCents(accountId: number, beforeDate: string): number;
 
   getNextAccountSequence(): number;

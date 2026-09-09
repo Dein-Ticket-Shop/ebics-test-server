@@ -369,8 +369,31 @@ export class SqliteStore implements AppStore {
     return rows.map((r) => this.rowToPerson(r));
   }
 
+  updatePerson(id: number, patch: Partial<Omit<Person, 'id' | 'createdAt'>>): Person | undefined {
+    const cols: Record<string, string> = {
+      externalId: 'external_id', name: 'name',
+      addressLine1: 'address_line1', addressLine2: 'address_line2', country: 'country',
+    };
+    const sets: string[] = [];
+    const params: (string | null)[] = [];
+    for (const [key, col] of Object.entries(cols)) {
+      if (key in patch) {
+        sets.push(`${col} = ?`);
+        params.push((patch as Record<string, string | undefined>)[key] ?? null);
+      }
+    }
+    if (sets.length > 0) {
+      this.db.prepare(`UPDATE persons SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
+    }
+    return this.getPerson(id);
+  }
+
   deletePerson(id: number): void {
-    this.db.prepare('DELETE FROM persons WHERE id = ?').run(id);
+    this.db.transaction(() => {
+      const accountIds = this.db.prepare('SELECT id FROM accounts WHERE person_id = ?').all(id) as { id: number }[];
+      for (const { id: accountId } of accountIds) this.deleteAccount(accountId);
+      this.db.prepare('DELETE FROM persons WHERE id = ?').run(id);
+    })();
   }
 
   createAccount(data: Omit<Account, 'id' | 'currentBalanceCents' | 'createdAt'>): Account {
@@ -396,6 +419,25 @@ export class SqliteStore implements AppStore {
   listAccounts(): Account[] {
     const rows = this.db.prepare('SELECT * FROM accounts ORDER BY id').all() as Record<string, string | number | null>[];
     return rows.map((r) => this.rowToAccount(r));
+  }
+
+  updateAccount(id: number, patch: { name?: string; currency?: string }): Account | undefined {
+    const sets: string[] = [];
+    const params: string[] = [];
+    if (patch.name !== undefined) { sets.push('name = ?'); params.push(patch.name); }
+    if (patch.currency !== undefined) { sets.push('currency = ?'); params.push(patch.currency); }
+    if (sets.length > 0) {
+      this.db.prepare(`UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
+    }
+    return this.getAccount(id);
+  }
+
+  deleteAccount(id: number): void {
+    this.db.transaction(() => {
+      // bookings have ON DELETE RESTRICT; partner_account_access cascades automatically
+      this.db.prepare('DELETE FROM bookings WHERE account_id = ?').run(id);
+      this.db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+    })();
   }
 
   listAccountsForPerson(personId: number): Account[] {
@@ -447,6 +489,18 @@ export class SqliteStore implements AppStore {
         .run(data.amountCents, data.accountId);
 
       return this.getBooking(Number(result.lastInsertRowid))!;
+    })();
+  }
+
+  deleteBooking(id: number): void {
+    this.db.transaction(() => {
+      const row = this.db.prepare('SELECT account_id, amount_cents FROM bookings WHERE id = ?')
+        .get(id) as { account_id: number; amount_cents: number } | undefined;
+      if (!row) return;
+      // Stored balance is maintained incrementally, so reverse this booking's contribution.
+      this.db.prepare('UPDATE accounts SET current_balance_cents = current_balance_cents - ? WHERE id = ?')
+        .run(row.amount_cents, row.account_id);
+      this.db.prepare('DELETE FROM bookings WHERE id = ?').run(id);
     })();
   }
 

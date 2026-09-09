@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto, invalidateAll } from '$app/navigation';
   import { base } from '$app/paths';
-  import { deletePerson, createAccount } from '$lib/api.js';
+  import { deletePerson, updatePerson, createAccount } from '$lib/api.js';
   import Icon from '$lib/components/Icon.svelte';
   import type { Person, Account } from '$lib/types.js';
 
@@ -17,12 +17,51 @@
   let creating = $state(false);
   let error = $state('');
 
+  // Edit person
+  let editing = $state(false);
+  let edit = $state({ name: '', externalId: '', addressLine1: '', addressLine2: '', country: '' });
+  let savingPerson = $state(false);
+  let editError = $state('');
+
+  function startEdit() {
+    edit = {
+      name: data.person.name,
+      externalId: data.person.externalId ?? '',
+      addressLine1: data.person.addressLine1 ?? '',
+      addressLine2: data.person.addressLine2 ?? '',
+      country: data.person.country,
+    };
+    editError = '';
+    editing = true;
+  }
+
+  async function handleSavePerson() {
+    if (!edit.name.trim()) return;
+    savingPerson = true;
+    editError = '';
+    try {
+      await updatePerson(data.person.id, {
+        name: edit.name.trim(),
+        externalId: edit.externalId.trim() || undefined,
+        addressLine1: edit.addressLine1.trim() || undefined,
+        addressLine2: edit.addressLine2.trim() || undefined,
+        country: edit.country.trim() || 'DE',
+      });
+      editing = false;
+      await invalidateAll();
+    } catch (e) {
+      editError = e instanceof Error ? e.message : 'Save failed';
+    } finally {
+      savingPerson = false;
+    }
+  }
+
   function formatCents(cents: number, cur: string): string {
     return (cents / 100).toLocaleString('de-DE', { style: 'currency', currency: cur });
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete ${data.person.name}? This may fail if they have accounts.`)) return;
+    if (!confirm(`Delete ${data.person.name}? This also deletes their accounts and bookings.`)) return;
     try {
       await deletePerson(data.person.id);
       goto(`${base}/banking/persons`);
@@ -69,10 +108,52 @@
       {/if}
     </div>
   </div>
-  <button class="btn btn-ghost btn-sm text-error gap-1.5" onclick={handleDelete}>
-    <Icon name="trash" class="w-3.5 h-3.5" /> Delete
-  </button>
+  <div class="flex gap-2">
+    <button class="btn btn-ghost btn-sm gap-1.5" onclick={startEdit}>
+      <Icon name="edit" class="w-3.5 h-3.5" /> Edit
+    </button>
+    <button class="btn btn-ghost btn-sm text-error gap-1.5" onclick={handleDelete}>
+      <Icon name="trash" class="w-3.5 h-3.5" /> Delete
+    </button>
+  </div>
 </div>
+
+{#if editing}
+  <div class="bg-base-200 rounded-xl p-4 mb-6">
+    <h2 class="text-sm font-semibold mb-3">Edit Person</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div class="form-control">
+        <label class="label" for="edName"><span class="label-text text-xs">Name</span></label>
+        <input id="edName" type="text" class="input input-bordered input-sm" bind:value={edit.name} />
+      </div>
+      <div class="form-control">
+        <label class="label" for="edExt"><span class="label-text text-xs">External ID</span></label>
+        <input id="edExt" type="text" class="input input-bordered input-sm font-mono" bind:value={edit.externalId} />
+      </div>
+      <div class="form-control">
+        <label class="label" for="edA1"><span class="label-text text-xs">Address Line 1</span></label>
+        <input id="edA1" type="text" class="input input-bordered input-sm" bind:value={edit.addressLine1} />
+      </div>
+      <div class="form-control">
+        <label class="label" for="edA2"><span class="label-text text-xs">Address Line 2</span></label>
+        <input id="edA2" type="text" class="input input-bordered input-sm" bind:value={edit.addressLine2} />
+      </div>
+      <div class="form-control w-24">
+        <label class="label" for="edCty"><span class="label-text text-xs">Country</span></label>
+        <input id="edCty" type="text" class="input input-bordered input-sm font-mono" bind:value={edit.country} maxlength="2" />
+      </div>
+    </div>
+    <div class="flex gap-2 mt-3">
+      <button class="btn btn-primary btn-sm" disabled={savingPerson || !edit.name.trim()} onclick={handleSavePerson}>
+        {savingPerson ? '...' : 'Save'}
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick={() => editing = false}>Cancel</button>
+    </div>
+    {#if editError}
+      <div class="alert alert-error mt-2 text-sm">{editError}</div>
+    {/if}
+  </div>
+{/if}
 
 <div class="flex items-center justify-between mb-4">
   <h2 class="text-lg font-semibold">Accounts</h2>

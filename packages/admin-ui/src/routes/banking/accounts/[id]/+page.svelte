@@ -1,9 +1,12 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { invalidateAll } from '$app/navigation';
+  import { goto, invalidateAll } from '$app/navigation';
   import { base } from '$app/paths';
   import {
     createBooking,
+    deleteAccount,
+    updateAccount,
+    deleteBooking,
     getStatementUrl,
     listAccountsForPartner,
     grantAccountAccess,
@@ -135,6 +138,55 @@
     }
   }
 
+  async function handleDelete() {
+    if (!confirm(`Delete account ${data.account.name} (${data.account.iban})? This also deletes its bookings.`)) return;
+    try {
+      await deleteAccount(data.account.id);
+      goto(`${base}/banking/accounts`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }
+
+  // Edit account (name + currency only; IBAN / account number are identity)
+  let editing = $state(false);
+  let editName = $state('');
+  let editCurrency = $state('');
+  let savingAccount = $state(false);
+  let editError = $state('');
+
+  function startEdit() {
+    editName = data.account.name;
+    editCurrency = data.account.currency;
+    editError = '';
+    editing = true;
+  }
+
+  async function handleSaveAccount() {
+    if (!editName.trim()) return;
+    savingAccount = true;
+    editError = '';
+    try {
+      await updateAccount(data.account.id, { name: editName.trim(), currency: editCurrency.trim() || 'EUR' });
+      editing = false;
+      await invalidateAll();
+    } catch (e) {
+      editError = e instanceof Error ? e.message : 'Save failed';
+    } finally {
+      savingAccount = false;
+    }
+  }
+
+  async function handleDeleteBooking(b: Booking) {
+    if (!confirm(`Delete booking ${formatCents(b.amountCents, b.currency)} (${formatDate(b.valueDate)})? Balance will be adjusted.`)) return;
+    try {
+      await deleteBooking(data.account.id, b.id);
+      await invalidateAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }
+
   function downloadStatement() {
     const url = getStatementUrl(data.account.id, stmtFormat);
     window.open(url, '_blank');
@@ -164,13 +216,45 @@
       {data.account.currency}
     </div>
   </div>
-  <div class="text-right">
-    <div class="text-xs text-base-content/50">Current Balance</div>
-    <div class="font-mono text-2xl font-bold {data.account.currentBalanceCents >= 0 ? 'text-success' : 'text-error'}">
-      {formatCents(data.account.currentBalanceCents, data.account.currency)}
+  <div class="flex items-start gap-4">
+    <div class="text-right">
+      <div class="text-xs text-base-content/50">Current Balance</div>
+      <div class="font-mono text-2xl font-bold {data.account.currentBalanceCents >= 0 ? 'text-success' : 'text-error'}">
+        {formatCents(data.account.currentBalanceCents, data.account.currency)}
+      </div>
     </div>
+    <button class="btn btn-ghost btn-sm gap-1.5" onclick={startEdit}>
+      <Icon name="edit" class="w-3.5 h-3.5" /> Edit
+    </button>
+    <button class="btn btn-ghost btn-sm text-error gap-1.5" onclick={handleDelete}>
+      <Icon name="trash" class="w-3.5 h-3.5" /> Delete
+    </button>
   </div>
 </div>
+
+{#if editing}
+  <div class="bg-base-200 rounded-xl p-4 mb-6">
+    <h2 class="text-sm font-semibold mb-3">Edit Account</h2>
+    <div class="flex gap-4 items-end">
+      <div class="form-control flex-1">
+        <label class="label" for="edAccName"><span class="label-text text-xs">Account Name</span></label>
+        <input id="edAccName" type="text" class="input input-bordered input-sm" bind:value={editName} />
+      </div>
+      <div class="form-control w-24">
+        <label class="label" for="edAccCur"><span class="label-text text-xs">Currency</span></label>
+        <input id="edAccCur" type="text" class="input input-bordered input-sm font-mono" bind:value={editCurrency} maxlength="3" />
+      </div>
+      <button class="btn btn-primary btn-sm" disabled={savingAccount || !editName.trim()} onclick={handleSaveAccount}>
+        {savingAccount ? '...' : 'Save'}
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick={() => editing = false}>Cancel</button>
+    </div>
+    <p class="text-xs text-base-content/40 mt-2">IBAN and account number are fixed and cannot be changed.</p>
+    {#if editError}
+      <div class="alert alert-error mt-2 text-sm">{editError}</div>
+    {/if}
+  </div>
+{/if}
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
   <!-- Partner Access -->
@@ -312,6 +396,7 @@
           <th>Counterparty</th>
           <th>Remittance Info</th>
           <th>Code</th>
+          <th class="w-12"></th>
         </tr>
       </thead>
       <tbody>
@@ -325,10 +410,19 @@
             <td class="text-sm">{booking.counterpartyName ?? '-'}</td>
             <td class="text-sm text-base-content/60 max-w-xs truncate">{booking.remittanceInfo ?? '-'}</td>
             <td><span class="badge badge-ghost badge-xs font-mono">{booking.transactionCode}</span></td>
+            <td>
+              <button
+                class="btn btn-ghost btn-xs text-error"
+                title="Delete booking"
+                onclick={(e) => { e.stopPropagation(); handleDeleteBooking(booking); }}
+              >
+                <Icon name="trash" class="w-3.5 h-3.5" />
+              </button>
+            </td>
           </tr>
           {#if expandedBooking === booking.id}
             <tr class="bg-base-300/30">
-              <td colspan="6" class="px-6 py-3">
+              <td colspan="7" class="px-6 py-3">
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                   <div>
                     <div class="text-[11px] text-base-content/40 uppercase tracking-wide">Value Date</div>

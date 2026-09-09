@@ -71,6 +71,8 @@ export const listPersons = () => json<Person[]>(`${BANK}/persons`);
 export const getPerson = (id: number) => json<Person>(`${BANK}/persons/${id}`);
 export const createPerson = (data: Omit<Person, 'id' | 'createdAt'>) =>
   json<Person>(`${BANK}/persons`, { method: 'POST', body: JSON.stringify(data) });
+export const updatePerson = (id: number, patch: Partial<Omit<Person, 'id' | 'createdAt'>>) =>
+  json<Person>(`${BANK}/persons/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
 export const deletePerson = (id: number) =>
   json<{ status: string }>(`${BANK}/persons/${id}`, { method: 'DELETE' });
 
@@ -80,6 +82,10 @@ export const listAccountsForPerson = (personId: number) =>
   json<Account[]>(`${BANK}/persons/${personId}/accounts`);
 export const createAccount = (data: { personId: number; name: string; currency?: string }) =>
   json<Account>(`${BANK}/accounts`, { method: 'POST', body: JSON.stringify(data) });
+export const updateAccount = (id: number, patch: { name?: string; currency?: string }) =>
+  json<Account>(`${BANK}/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+export const deleteAccount = (id: number) =>
+  json<{ status: string }>(`${BANK}/accounts/${id}`, { method: 'DELETE' });
 
 export const listAccountsForPartner = (partnerId: string) =>
   json<Account[]>(`${BANK}/partners/${encodeURIComponent(partnerId)}/accounts`);
@@ -107,6 +113,8 @@ export const createBooking = (accountId: number, data: {
   transactionCode?: string;
   currency?: string;
 }) => json<Booking>(`${BANK}/accounts/${accountId}/bookings`, { method: 'POST', body: JSON.stringify(data) });
+export const deleteBooking = (accountId: number, bookingId: number) =>
+  json<{ status: string }>(`${BANK}/accounts/${accountId}/bookings/${bookingId}`, { method: 'DELETE' });
 
 export const getStatementUrl = (accountId: number, format: 'camt.053' | 'mt940', from?: string, to?: string) => {
   const params = new URLSearchParams({ format });

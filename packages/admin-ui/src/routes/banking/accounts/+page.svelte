@@ -1,6 +1,8 @@
 <script lang="ts">
   import { base } from '$app/paths';
+  import { invalidateAll } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
+  import { deleteAccount } from '$lib/api.js';
   import type { Account, Person } from '$lib/types.js';
 
   interface Props {
@@ -16,6 +18,16 @@
   }
 
   const totalBalance = $derived(data.accounts.reduce((sum, a) => sum + a.currentBalanceCents, 0));
+
+  async function handleDelete(account: Account) {
+    if (!confirm(`Delete account ${account.name} (${account.iban})? This also removes its bookings.`)) return;
+    try {
+      await deleteAccount(account.id);
+      await invalidateAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }
 </script>
 
 <div class="flex items-center justify-between mb-6">
@@ -46,7 +58,7 @@
           <th>Owner</th>
           <th>Currency</th>
           <th class="text-right">Balance</th>
-          <th class="w-20"></th>
+          <th class="w-28"></th>
         </tr>
       </thead>
       <tbody>
@@ -69,7 +81,10 @@
               {formatCents(account.currentBalanceCents, account.currency)}
             </td>
             <td>
-              <a href="{base}/banking/accounts/{account.id}" class="btn btn-ghost btn-xs">View</a>
+              <div class="flex gap-1 justify-end">
+                <a href="{base}/banking/accounts/{account.id}" class="btn btn-ghost btn-xs">View</a>
+                <button class="btn btn-ghost btn-xs text-error" onclick={() => handleDelete(account)}>Delete</button>
+              </div>
             </td>
           </tr>
         {/each}
