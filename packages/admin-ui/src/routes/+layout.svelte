@@ -61,14 +61,19 @@
       </div>
       <div class="px-3 pt-4">
         <div class="text-[11px] font-medium text-base-content/40 uppercase tracking-wider px-3 mb-1">Protocol</div>
-        <ul class="menu menu-sm gap-0.5 p-0">
+        <ul class="menu menu-sm gap-0.5 p-0 w-full [--menu-active-bg:var(--color-primary)] [--menu-active-fg:var(--color-primary-content)]">
           {#each navItems as item}
             <li>
               <a
                 href="{base}{item.href}"
-                class="gap-3 rounded-lg {isActive(item.href) ? 'active font-medium' : ''}"
+                class="gap-3 rounded-lg {isActive(item.href) ? 'menu-active font-semibold' : ''}"
+                aria-current={isActive(item.href) ? 'page' : undefined}
               >
-                <Icon name={item.icon} class="w-[18px] h-[18px] opacity-70" />
+                <Icon
+                  name={item.icon}
+                  class="w-[18px] h-[18px] {isActive(item.href) ? '' : 'opacity-70'}"
+                  strokeWidth={isActive(item.href) ? 2.25 : 1.5}
+                />
                 {item.label}
               </a>
             </li>
@@ -77,14 +82,19 @@
       </div>
       <div class="px-3 pt-5">
         <div class="text-[11px] font-medium text-base-content/40 uppercase tracking-wider px-3 mb-1">Banking</div>
-        <ul class="menu menu-sm gap-0.5 p-0">
+        <ul class="menu menu-sm gap-0.5 p-0 w-full [--menu-active-bg:var(--color-primary)] [--menu-active-fg:var(--color-primary-content)]">
           {#each bankingItems as item}
             <li>
               <a
                 href="{base}{item.href}"
-                class="gap-3 rounded-lg {isActive(item.href, item.exact) ? 'active font-medium' : ''}"
+                class="gap-3 rounded-lg {isActive(item.href, item.exact) ? 'menu-active font-semibold' : ''}"
+                aria-current={isActive(item.href, item.exact) ? 'page' : undefined}
               >
-                <Icon name={item.icon} class="w-[18px] h-[18px] opacity-70" />
+                <Icon
+                  name={item.icon}
+                  class="w-[18px] h-[18px] {isActive(item.href, item.exact) ? '' : 'opacity-70'}"
+                  strokeWidth={isActive(item.href, item.exact) ? 2.25 : 1.5}
+                />
                 {item.label}
               </a>
             </li>
