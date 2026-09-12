@@ -1,9 +1,9 @@
 import { generateKeyPairSync, createHash, createSign, privateDecrypt, createDecipheriv, createCipheriv, publicEncrypt, randomBytes, constants } from 'node:crypto';
 import { deflateSync, inflateSync } from 'node:zlib';
 import forge from 'node-forge';
-import * as xmlCrypto from 'xml-crypto';
-import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
+import { DOMParser } from '@xmldom/xmldom';
 import { parseXml, xpathString } from '../../src/protocol/xml-parser.js';
+import { canonicalizeSubtree } from '../../src/protocol/xml-signature.js';
 
 export interface TestClientKeys {
   signatureKeyPair: { publicKey: string; privateKey: string };
@@ -178,59 +178,7 @@ export function buildHpbRequest(
   // Build XML with AuthSignature placeholder
   const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsNoPubKeyDigestsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>HPB</AdminOrderType></OrderDetails><SecurityMedium>0000</SecurityMedium></static><mutable/></header><AuthSignature/><body/></ebicsNoPubKeyDigestsRequest>`;
 
-  // Parse and canonicalize authenticated elements
-  const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  const c14n = new xmlCrypto.C14nCanonicalization();
-
-  const authNodes: any[] = [];
-  function collectAuth(node: any) {
-    if (node.nodeType === 1) {
-      if (node.getAttribute && node.getAttribute('authenticate') === 'true') {
-        authNodes.push(node);
-      }
-      if (node.childNodes) {
-        for (let i = 0; i < node.childNodes.length; i++) {
-          collectAuth(node.childNodes.item(i));
-        }
-      }
-    }
-  }
-  collectAuth(doc.documentElement);
-
-  let canonicalized = '';
-  for (const n of authNodes) {
-    canonicalized += c14n.process(n);
-  }
-  // Inclusive C14n re-declares the in-scope `ds` prefix at the apex; mirror the server's
-  // fixup so client and server digest byte-identical forms (matches node-ebics-client).
-  canonicalized = canonicalized.replace(
-    /xmlns="urn:org:ebics:H005"/g,
-    'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
-  );
-
-  const digest = createHash('sha256').update(canonicalized).digest('base64');
-
-  // Build SignedInfo (must be in ds namespace)
-  const signedInfoXml = `<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#xpointer(//*[@authenticate='true'])"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>${digest}</ds:DigestValue></ds:Reference></ds:SignedInfo>`;
-
-  // Canonicalize SignedInfo for signing
-  const signedInfoDoc = new DOMParser().parseFromString(signedInfoXml, 'text/xml');
-  // The H005 default namespace is in scope from the request root, so inclusive C14n
-  // re-declares it on the SignedInfo apex; mirror the server's fixup before signing.
-  const signedInfoC14n = c14n
-    .process(signedInfoDoc.documentElement as unknown as Node)
-    .replace(
-      'xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
-      'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
-    );
-
-  const signer = createSign('RSA-SHA256');
-  signer.update(signedInfoC14n);
-  const signatureValue = signer.sign(keys.authKeyPair.privateKey, 'base64');
-
-  const authSignature = `<AuthSignature xmlns="urn:org:ebics:H005">${signedInfoXml}<ds:SignatureValue xmlns:ds="http://www.w3.org/2000/09/xmldsig#">${signatureValue}</ds:SignatureValue></AuthSignature>`;
-
-  return xml.replace('<AuthSignature/>', authSignature);
+  return signEbicsRequest(xml, keys.authKeyPair.privateKey);
 }
 
 export interface BankCerts {
@@ -250,8 +198,8 @@ function generateNonce(): string {
 }
 
 function signEbicsRequest(xml: string, privateKey: string): string {
+  // Digest: inclusive C14N 1.0 of every authenticate="true" subtree in its document context
   const doc = new DOMParser().parseFromString(xml, 'text/xml');
-  const c14n = new xmlCrypto.C14nCanonicalization();
 
   const authNodes: any[] = [];
   function collectAuth(node: any) {
@@ -270,36 +218,26 @@ function signEbicsRequest(xml: string, privateKey: string): string {
 
   let canonicalized = '';
   for (const n of authNodes) {
-    canonicalized += c14n.process(n);
+    canonicalized += canonicalizeSubtree(n);
   }
-  // Inclusive C14n re-declares the in-scope `ds` prefix at the apex; mirror the server's
-  // fixup so client and server digest byte-identical forms (matches node-ebics-client).
-  canonicalized = canonicalized.replace(
-    /xmlns="urn:org:ebics:H005"/g,
-    'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
-  );
 
   const digest = createHash('sha256').update(canonicalized).digest('base64');
 
-  const signedInfoXml = `<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#xpointer(//*[@authenticate='true'])"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>${digest}</ds:DigestValue></ds:Reference></ds:SignedInfo>`;
+  const signedInfoXml = `<ds:SignedInfo><ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/><ds:Reference URI="#xpointer(//*[@authenticate='true'])"><ds:Transforms><ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/></ds:Transforms><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>${digest}</ds:DigestValue></ds:Reference></ds:SignedInfo>`;
+  const withSignedInfo = xml.replace(
+    '<AuthSignature/>',
+    `<AuthSignature>${signedInfoXml}<ds:SignatureValue>__SIGNATURE__</ds:SignatureValue></AuthSignature>`,
+  );
 
-  const signedInfoDoc = new DOMParser().parseFromString(signedInfoXml, 'text/xml');
-  // The H005 default namespace is in scope from the request root, so inclusive C14n
-  // re-declares it on the SignedInfo apex; mirror the server's fixup before signing.
-  const signedInfoC14n = c14n
-    .process(signedInfoDoc.documentElement as unknown as Node)
-    .replace(
-      'xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
-      'xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"',
-    );
+  // Signature: SignedInfo canonicalized in its document context (inherits the default and ds namespaces)
+  const signedDoc = new DOMParser().parseFromString(withSignedInfo, 'text/xml');
+  const signedInfo = signedDoc.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'SignedInfo').item(0);
 
   const signer = createSign('RSA-SHA256');
-  signer.update(signedInfoC14n);
+  signer.update(canonicalizeSubtree(signedInfo));
   const signatureValue = signer.sign(privateKey, 'base64');
 
-  const authSignature = `<AuthSignature xmlns="urn:org:ebics:H005">${signedInfoXml}<ds:SignatureValue xmlns:ds="http://www.w3.org/2000/09/xmldsig#">${signatureValue}</ds:SignatureValue></AuthSignature>`;
-
-  return xml.replace('<AuthSignature/>', authSignature);
+  return withSignedInfo.replace('__SIGNATURE__', signatureValue);
 }
 
 export function buildEbicsDownloadInitRequest(
