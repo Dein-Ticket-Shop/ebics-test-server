@@ -186,14 +186,15 @@ describe('Key Management', () => {
       expect(sub.state).toBe(SubscriberState.SUSPENDED);
     });
 
-    it('should reject requests after suspension', async () => {
+    // Chapter 5.5.1.2.1: unknown subscribers and wrong states are not revealed to an unauthenticated sender
+    it('should reject requests after suspension with EBICS_AUTHENTICATION_FAILED', async () => {
       await postEbics(app, buildEbicsSprRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, getBankEncPubKey(store)));
 
       const hpdRes = await postEbics(
         app,
         buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'HPD'),
       );
-      expect(await hpdRes.text()).toContain('091004');
+      expect(await hpdRes.text()).toContain('061001');
     });
   });
 
@@ -206,12 +207,12 @@ describe('Key Management', () => {
       expect(await res.text()).toContain('091011');
     });
 
-    it('should reject unknown user', async () => {
+    it('should reject unknown user with EBICS_AUTHENTICATION_FAILED', async () => {
       const res = await postEbics(
         app,
         buildEbicsDownloadInitRequest(HOST_ID, 'NOPARTNER', 'NOUSER', clientKeys, bankCerts, 'HPD'),
       );
-      expect(await res.text()).toContain('091003');
+      expect(await res.text()).toContain('061001');
     });
   });
 });

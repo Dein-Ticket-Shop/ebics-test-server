@@ -323,21 +323,22 @@ describe('Downloads', () => {
       expect(await res.text()).toContain('091011');
     });
 
-    it('should reject download for unknown user', async () => {
+    // Chapter 5.5.1.2.1: unknown subscribers and wrong states are not revealed to an unauthenticated sender
+    it('should reject download for unknown user with EBICS_AUTHENTICATION_FAILED', async () => {
       const res = await postEbics(
         app,
         buildEbicsDownloadInitRequest(HOST_ID, 'UNKNOWN', 'NOBODY', clientKeys, bankCerts, 'HPD'),
       );
-      expect(await res.text()).toContain('091003');
+      expect(await res.text()).toContain('061001');
     });
 
-    it('should reject download for non-READY subscriber', async () => {
+    it('should reject download for non-READY subscriber with EBICS_AUTHENTICATION_FAILED', async () => {
       store.createSubscriber('P2', 'U2');
       const res = await postEbics(
         app,
         buildEbicsDownloadInitRequest(HOST_ID, 'P2', 'U2', clientKeys, bankCerts, 'HPD'),
       );
-      expect(await res.text()).toContain('091004');
+      expect(await res.text()).toContain('061001');
     });
   });
 

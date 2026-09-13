@@ -99,7 +99,7 @@
 - [x] Test: SPR suspends subscriber
 - [x] Test: suspended subscriber rejected for subsequent requests
 - [x] Test: unknown HostID → EBICS_INVALID_HOST_ID
-- [x] Test: unknown user → EBICS_USER_UNKNOWN
+- [x] Test: unknown user → EBICS_USER_UNKNOWN (INI/HIA; authenticated requests answer EBICS_AUTHENTICATION_FAILED, see Phase 9)
 
 ## Simulated Banking Backend
 
@@ -184,10 +184,11 @@
 - [x] HVE/HVS without TransactionKey or SignatureData answer `091113` as technical return code (EBICS annex 1, chapter 2)
 - [x] Orders of other customers cannot be listed or signed (cross-customer signatures, chapter 3.5, are an optional special case and not supported): HVU/HVZ list only the own customer's orders; HVD/HVT/HVE/HVS answer `091114` when no such order waits for signatures, otherwise `091007` (HVD/HVT, chapters 8.3.2, 8.3.3) or `090003` (HVE, chapter 8.3.4, and HVS). `091120` is only returned for EU files of another customer
 - [x] Replay of real-time messages behind `EBICS_WSS_REPLAY=true` (off by default): DK Anlage 2 (chapters 3.1, 3.2) allows delivering messages later when no wss connection to the customer is active, with `TIMESTAMP` = first delivery attempt, but does not require it. EBICS-HAA and INFO messages are kept per customer while a token of the customer has not reached its `VALIDITY` (our choice) and sent in order, once, when a client of the customer connects; `GET /api/realtime/kept-messages` and the Real-time page list them
+- [x] Technical subscribers (EBICS 3.0.2 chapter 3.7): requests with `SystemID` (ebicsRequest, HPB) are authenticated with the key of the subscriber PartnerID + SystemID; unknown, not ready or not signing technical subscribers → `EBICS_AUTHENTICATION_FAILED`, only then an unknown or not ready subscriber of UserID → `EBICS_USER_UNKNOWN` / `EBICS_INVALID_USER_STATE` (chapter 5.5.1.2.1). Downloads and HPB are encrypted with the technical subscriber's key; order permissions follow PartnerID and UserID. EUs of the technical subscriber count as transport signatures (uploads) and cannot sign or cancel in the VEU (`090003`)
+- [x] Authenticated requests (ebicsRequest, HPB) of an unknown subscriber, a subscriber not in state READY or without authentication key answer `EBICS_AUTHENTICATION_FAILED` instead of `EBICS_USER_UNKNOWN` / `EBICS_INVALID_USER_STATE`, so an unauthenticated sender learns nothing about subscriber IDs or states (chapter 5.5.1.2.1). INI and HIA, which carry no authentication signature, keep their return codes
 
 ### Not yet supported (TODO)
 
-- [ ] Technical subscribers with `SystemID` submitting on behalf of other users
 - [ ] Signature permissions limited to accounts, amounts or BTF, and orders that need two bank-technical signatures (minimum 2)
 - [ ] VEU for direct debits (pain.008 uploads are executed even when signatures are missing and `requestEDS` is set)
 - [ ] Customers without VEU agreement (`091007`) or without authorisation outside EBICS (`090003`), chapter 3.14; every customer is assumed to have both

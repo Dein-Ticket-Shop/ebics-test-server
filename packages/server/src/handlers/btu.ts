@@ -23,6 +23,8 @@ export interface BtuOrderContext {
    * tests) the uploader counts as the only signer.
    */
   signature?: { signatureData?: string; transactionKey: string; bankEncryptionPrivateKey: string };
+  /** SystemID of the technical subscriber that sent the upload: its EUs are transport signatures (chapter 3.7) */
+  technicalUserId?: string;
 }
 
 export function handleBtu(
@@ -68,7 +70,11 @@ export function handleBtu(
             context.signature.bankEncryptionPrivateKey,
           ),
           data: rawContent,
-        }).map((signer) => ({ userId: signer.userId, signatureClass: signer.subscriber.signatureClass }))
+        }).map((signer) => ({
+          userId: signer.userId,
+          // A technical subscriber cannot place bank-technical signatures (chapter 3.7)
+          signatureClass: signer.userId === context.technicalUserId ? ('T' as const) : signer.subscriber.signatureClass,
+        }))
       : [{ userId: subscriber.userId, signatureClass: subscriber.signatureClass }];
     const signerClasses = signers.map((signer) => uploadSignatureClass(signatureFlag, signer.signatureClass));
 

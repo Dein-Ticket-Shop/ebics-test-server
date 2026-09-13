@@ -241,6 +241,17 @@ function signEbicsRequest(xml: string, privateKey: string): string {
   return withSignedInfo.replace('__SIGNATURE__', signatureValue);
 }
 
+/**
+ * The request as a technical subscriber sends it (EBICS 3.0.2 chapter 3.7): SystemID after UserID in the static header
+ * and the authentication signature made with the given keys instead of those of the subscriber of UserID
+ */
+export function asTechnicalSubscriberRequest(signedXml: string, systemId: string, technicalKeys: TestClientKeys): string {
+  const unsigned = signedXml
+    .replace(/<AuthSignature>[\s\S]*<\/AuthSignature>/, '<AuthSignature/>')
+    .replace(/(<UserID>[^<]*<\/UserID>)/, `$1<SystemID>${systemId}</SystemID>`);
+  return signEbicsRequest(unsigned, technicalKeys.authKeyPair.privateKey);
+}
+
 export function buildEbicsDownloadInitRequest(
   hostId: string,
   partnerId: string,

@@ -105,6 +105,8 @@ export interface Transaction {
   /** Download items handed out by this transaction, marked delivered on a positive receipt */
   deliveryKind?: DeliveryKind;
   deliveryKeys?: string[];
+  /** SystemID of the technical subscriber that sent the request (EBICS 3.0.2 chapter 3.7) */
+  systemId?: string;
   createdAt: string;
   expiresAt: string;
 }

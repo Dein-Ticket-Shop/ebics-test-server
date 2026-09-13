@@ -1,12 +1,13 @@
 import { randomBytes, publicEncrypt, constants } from 'node:crypto';
 import type { HandlerResult } from './handler-types.js';
 import type { XmlDocument } from '../protocol/xml-parser.js';
-import type { EbicsStore } from '../store/types.js';
+import type { EbicsStore, Subscriber } from '../store/types.js';
 import { SubscriberState } from '../store/types.js';
 import { xpathString } from '../protocol/xml-parser.js';
 import { buildKeyManagementResponse, buildHpbOrderData } from '../protocol/xml-builder.js';
 import { ReturnCode } from '../protocol/return-codes.js';
-import { verifyAuthSignature, extractPublicKeyFromCertBase64 } from '../protocol/xml-signature.js';
+import { extractPublicKeyFromCertBase64 } from '../protocol/xml-signature.js';
+import { authenticateRequest, requestSystemId } from '../protocol/request-authentication.js';
 import { aesEncrypt, deflate, base64Encode } from '../protocol/crypto.js';
 import { allowPreActivation } from '../config/feature-flags.js';
 
@@ -27,29 +28,17 @@ export function handleHpb(
     return buildKeyManagementResponse(ReturnCode.EBICS_INVALID_REQUEST, ReturnCode.EBICS_INVALID_REQUEST);
   }
 
-  const subscriber = store.getSubscriber(partnerId, userId);
-  if (!subscriber) {
-    return buildKeyManagementResponse(ReturnCode.EBICS_USER_UNKNOWN, ReturnCode.EBICS_USER_UNKNOWN);
-  }
-
   // Real banks only serve HPB to a fully activated (READY) subscriber. We allow the
   // pre-activation INITIALIZED state only when EBICS_ALLOW_PREACTIVATION is set, for
   // convenient local testing. Order processing is already gated on READY in the dispatcher.
-  const stateOk =
-    subscriber.state === SubscriberState.READY ||
-    (subscriber.state === SubscriberState.INITIALIZED && allowPreActivation());
-  if (!stateOk) {
-    return buildKeyManagementResponse(ReturnCode.EBICS_INVALID_USER_STATE, ReturnCode.EBICS_INVALID_USER_STATE);
+  const stateOk = (s: Subscriber) =>
+    s.state === SubscriberState.READY || (s.state === SubscriberState.INITIALIZED && allowPreActivation());
+  // With SystemID a technical subscriber of the same customer signs the request (chapters 3.7 and 4.4.2.1)
+  const authenticated = authenticateRequest(doc, store, { partnerId, userId, systemId: requestSystemId(doc) }, stateOk);
+  if ('error' in authenticated) {
+    return buildKeyManagementResponse(authenticated.error, authenticated.error);
   }
-
-  if (!subscriber.keys.authenticationCertificate) {
-    return buildKeyManagementResponse(ReturnCode.EBICS_INVALID_USER_STATE, ReturnCode.EBICS_INVALID_USER_STATE);
-  }
-
-  const subscriberPubKey = extractPublicKeyFromCertBase64(subscriber.keys.authenticationCertificate);
-  if (!verifyAuthSignature(doc, subscriberPubKey)) {
-    return buildKeyManagementResponse(ReturnCode.EBICS_AUTHENTICATION_FAILED, ReturnCode.EBICS_AUTHENTICATION_FAILED);
-  }
+  const recipient = authenticated.technical ?? authenticated.subscriber;
 
   const hostConfig = store.getHostConfig();
   if (!hostConfig) {
@@ -70,8 +59,8 @@ export function handleHpb(
   const transactionKey = randomBytes(16);
   const encrypted = aesEncrypt(compressed, transactionKey);
 
-  // Wrap transaction key with subscriber's encryption public key
-  const encPubKey = extractPublicKeyFromCertBase64(subscriber.keys.encryptionCertificate!);
+  // Wrap the transaction key with the encryption key of the subscriber, or of the technical subscriber (chapter 3.7)
+  const encPubKey = extractPublicKeyFromCertBase64(recipient.keys.encryptionCertificate!);
   const wrappedKey = publicEncrypt(
     { key: encPubKey, padding: constants.RSA_PKCS1_PADDING },
     transactionKey,

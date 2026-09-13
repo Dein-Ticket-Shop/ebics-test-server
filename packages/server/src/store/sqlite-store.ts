@@ -48,6 +48,7 @@ export class SqliteStore implements AppStore {
     this.ensureColumn('transactions', 'delivery_keys', 'TEXT');
     this.ensureColumn('uploaded_orders', 'order_id', 'TEXT');
     this.ensureColumn('transactions', 'signature_flag', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('transactions', 'system_id', 'TEXT');
     this.ensureColumn('payment_orders', 'vop_confirmation_required', 'INTEGER NOT NULL DEFAULT 0');
     this.ensureColumn('payment_order_signatures', 'signature_class', 'TEXT');
     this.ensureColumn('subscribers', 'protocol_downloads_allowed', 'INTEGER NOT NULL DEFAULT 1');
@@ -289,15 +290,15 @@ export class SqliteStore implements AppStore {
     const expires = new Date(Date.now() + 3600_000).toISOString().replace('T', ' ').replace('Z', '');
 
     this.db.prepare(`
-      INSERT INTO transactions (transaction_id, partner_id, user_id, host_id, direction, phase, order_type, num_segments, current_segment, segments, transaction_key, enc_key_digest, signature_data, service_name, msg_name, order_id, service_option, request_eds, signature_flag, delivery_kind, delivery_keys, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO transactions (transaction_id, partner_id, user_id, host_id, direction, phase, order_type, num_segments, current_segment, segments, transaction_key, enc_key_digest, signature_data, service_name, msg_name, order_id, service_option, request_eds, signature_flag, delivery_kind, delivery_keys, system_id, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       tx.transactionId, tx.partnerId, tx.userId, tx.hostId,
       tx.direction, tx.phase, tx.orderType, tx.numSegments, tx.currentSegment,
       JSON.stringify(tx.segments), tx.transactionKey, tx.encKeyDigest,
       tx.signatureData ?? null, tx.serviceName ?? null, tx.msgName ?? null,
       tx.orderId ?? null, tx.serviceOption ?? null, tx.requestEds ? 1 : 0, tx.signatureFlag ? 1 : 0,
-      tx.deliveryKind ?? null, tx.deliveryKeys ? JSON.stringify(tx.deliveryKeys) : null,
+      tx.deliveryKind ?? null, tx.deliveryKeys ? JSON.stringify(tx.deliveryKeys) : null, tx.systemId ?? null,
       now, expires,
     );
 
@@ -680,6 +681,7 @@ export class SqliteStore implements AppStore {
       signatureFlag: row['signature_flag'] === 1,
       deliveryKind: (row['delivery_kind'] as DeliveryKind) ?? undefined,
       deliveryKeys: row['delivery_keys'] ? JSON.parse(row['delivery_keys'] as string) : undefined,
+      systemId: (row['system_id'] as string) ?? undefined,
       createdAt: row['created_at'] as string,
       expiresAt: row['expires_at'] as string,
     };

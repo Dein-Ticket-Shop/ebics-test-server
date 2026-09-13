@@ -354,6 +354,12 @@ export function processVeuSignature(
       data: veu.rawContent,
     });
 
+    // A technical subscriber cannot place bank-technical signatures (chapter 3.7): its EU neither signs nor cancels
+    const systemId = xpathString('//ebics:header/ebics:static/ebics:SystemID/text()', ctx.doc);
+    if (systemId && signers.some((signer) => signer.userId === systemId)) {
+      return respond(ReturnCode.EBICS_AUTHORISATION_ORDER_TYPE_FAILED);
+    }
+
     const request = { partnerId: subscriber.partnerId, orderId: veu.orderId, userId: signers.map((signer) => signer.userId) };
     const result = orderType === 'HVE' ? signVeuOrder(store, request) : cancelVeuOrder(store, request);
     return respond(ReturnCode.EBICS_OK, result.orderId);

@@ -8,7 +8,8 @@ import { handleHpb } from '../handlers/hpb.js';
 import { getRootElementName, xpathSelect, xpathString } from './xml-parser.js';
 import { ReturnCode } from './return-codes.js';
 import { buildKeyManagementResponse, buildEbicsResponse, type EbicsResponseOptions } from './xml-builder.js';
-import { verifyAuthSignature, extractPublicKeyFromCertBase64 } from './xml-signature.js';
+import { extractPublicKeyFromCertBase64 } from './xml-signature.js';
+import { authenticateRequest, requestSystemId } from './request-authentication.js';
 import { generateTransactionId, base64Decode } from './crypto.js';
 import { prepareDownload } from './download-pipeline.js';
 import { handleHpd } from '../handlers/hpd.js';
@@ -184,23 +185,15 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     return errorResponse(ReturnCode.EBICS_INVALID_REQUEST);
   }
 
-  const subscriber = store.getSubscriber(partnerId, userId);
-  if (!subscriber) {
-    return errorResponse(ReturnCode.EBICS_USER_UNKNOWN);
+  // Authenticity (chapters 3.7, 5.5.1.2.1): with SystemID a technical subscriber signs for the subscriber of UserID
+  const systemId = requestSystemId(ctx.doc);
+  const authenticated = authenticateRequest(ctx.doc, store, { partnerId, userId, systemId }, (s) => s.state === SubscriberState.READY);
+  if ('error' in authenticated) {
+    return errorResponse(authenticated.error);
   }
-
-  if (subscriber.state !== SubscriberState.READY) {
-    return errorResponse(ReturnCode.EBICS_INVALID_USER_STATE);
-  }
-
-  if (!subscriber.keys.authenticationCertificate) {
-    return errorResponse(ReturnCode.EBICS_INVALID_USER_STATE);
-  }
-
-  const subscriberAuthPubKey = extractPublicKeyFromCertBase64(subscriber.keys.authenticationCertificate);
-  if (!verifyAuthSignature(ctx.doc, subscriberAuthPubKey)) {
-    return errorResponse(ReturnCode.EBICS_AUTHENTICATION_FAILED);
-  }
+  const { subscriber } = authenticated;
+  // Responses for a technical subscriber are encrypted with its encryption key (chapter 3.7)
+  const recipient = authenticated.technical ?? subscriber;
 
   const hostConfig = store.getHostConfig();
   if (!hostConfig) {
@@ -234,7 +227,7 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
   // Upload detection: NumSegments in request static header = upload
   const numSegmentsStr = xpathString('//ebics:header/ebics:static/ebics:NumSegments/text()', ctx.doc);
   if (numSegmentsStr) {
-    return handleUploadInit(ctx, config, subscriber, hostConfig, partnerId!, userId!, parseInt(numSegmentsStr, 10), orderType);
+    return handleUploadInit(ctx, config, subscriber, hostConfig, partnerId!, userId!, parseInt(numSegmentsStr, 10), orderType, systemId);
   }
 
   const handlers: Record<string, DownloadOrderHandler> = {
@@ -277,7 +270,7 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     });
   }
 
-  if (!subscriber.keys.encryptionCertificate) {
+  if (!recipient.keys.encryptionCertificate) {
     return errorResponse(ReturnCode.EBICS_INVALID_USER_STATE);
   }
 
@@ -313,7 +306,7 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     );
   }
 
-  const subscriberEncPubKey = extractPublicKeyFromCertBase64(subscriber.keys.encryptionCertificate);
+  const subscriberEncPubKey = extractPublicKeyFromCertBase64(recipient.keys.encryptionCertificate);
   const bankEncCertDer = base64Decode(
     hostConfig.bankKeys.encryptionCertificate
       .replace(/-----BEGIN CERTIFICATE-----/g, '')
@@ -442,6 +435,7 @@ function handleUploadInit(
   userId: string,
   numSegments: number,
   orderType: string,
+  systemId?: string,
 ): HandlerResult {
   const { store, hostId } = config;
 
@@ -483,6 +477,7 @@ function handleUploadInit(
     serviceOption: serviceOption ?? undefined,
     signatureFlag,
     requestEds,
+    systemId,
   });
 
   return {
@@ -578,7 +573,7 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
             tx.msgName,
             sub,
             store,
-            { orderId: tx.orderId, serviceOption: tx.serviceOption, signatureFlag: tx.signatureFlag, requestEds: tx.requestEds, signature },
+            { orderId: tx.orderId, serviceOption: tx.serviceOption, signatureFlag: tx.signatureFlag, requestEds: tx.requestEds, signature, technicalUserId: tx.systemId },
           );
           break;
       }
