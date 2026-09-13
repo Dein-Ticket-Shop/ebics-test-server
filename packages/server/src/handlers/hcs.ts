@@ -14,14 +14,27 @@ export function handleHcs(
     return ReturnCode.EBICS_INVALID_ORDER_DATA_FORMAT;
   }
 
-  const sigVersion = extractText(doc, 'SignatureVersion');
-  const authVersion = extractText(doc, 'AuthenticationVersion');
-  const encVersion = extractText(doc, 'EncryptionVersion');
+  // HCSRequestOrderData (H005 XSD): AuthenticationPubKeyInfo, EncryptionPubKeyInfo, esig:SignaturePubKeyInfo.
+  // Each certificate is read from its own key info element, so any element order works. Documents
+  // without these wrappers keep the original positional reading: signature, authentication, encryption.
+  const sigInfo = firstByLocalName(doc, 'SignaturePubKeyInfo');
+  const authInfo = firstByLocalName(doc, 'AuthenticationPubKeyInfo');
+  const encInfo = firstByLocalName(doc, 'EncryptionPubKeyInfo');
+  const wrapped = Boolean(sigInfo && authInfo && encInfo);
 
-  // HCS order: signature cert first, then auth, then enc
-  const sigCert = certs.item(0)?.textContent?.trim().replace(/\s/g, '');
-  const authCert = certs.item(1)?.textContent?.trim().replace(/\s/g, '');
-  const encCert = certs.item(2)?.textContent?.trim().replace(/\s/g, '');
+  const sigVersion = extractText(wrapped ? sigInfo : doc, 'SignatureVersion');
+  const authVersion = extractText(wrapped ? authInfo : doc, 'AuthenticationVersion');
+  const encVersion = extractText(wrapped ? encInfo : doc, 'EncryptionVersion');
+
+  const certificate = (scope: any, index: number) =>
+    (wrapped ? scope : doc)
+      .getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'X509Certificate')
+      .item(wrapped ? 0 : index)
+      ?.textContent?.trim()
+      .replace(/\s/g, '');
+  const sigCert = certificate(sigInfo, 0);
+  const authCert = certificate(authInfo, 1);
+  const encCert = certificate(encInfo, 2);
 
   if (!sigCert || !authCert || !encCert) {
     return ReturnCode.EBICS_INVALID_ORDER_DATA_FORMAT;
@@ -51,4 +64,9 @@ function extractText(doc: any, localName: string): string | undefined {
   const elements = doc.getElementsByTagNameNS('*', localName);
   if (elements.length > 0) return elements.item(0)?.textContent?.trim() ?? undefined;
   return undefined;
+}
+
+function firstByLocalName(doc: any, localName: string): any {
+  const elements = doc.getElementsByTagNameNS('*', localName);
+  return elements.length > 0 ? elements.item(0) : undefined;
 }
