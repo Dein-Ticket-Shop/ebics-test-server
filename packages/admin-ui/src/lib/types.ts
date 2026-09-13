@@ -254,6 +254,25 @@ export interface ServerFlags {
   wssOneTimeTokens: boolean;
 }
 
+export type EnvFlagValue = boolean | string;
+
+/** An environment flag as described by the server (GET /api/config/env-flags) */
+export interface EnvFlag {
+  key: string;
+  env: string;
+  type: 'boolean' | 'enum';
+  label: string;
+  /** Inline code is written in backticks */
+  description: string;
+  options?: string[];
+  defaultValue: EnvFlagValue;
+  value: EnvFlagValue;
+  /** The variable as set in the environment, null when unset */
+  raw: string | null;
+  /** Set to a value the server does not recognise, so the default applies */
+  ignored: boolean;
+}
+
 // VEU (distributed electronic signature)
 
 export interface OrderSignature {

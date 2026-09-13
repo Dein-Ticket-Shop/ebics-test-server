@@ -10,6 +10,7 @@ import type {
   Account,
   Booking,
   ServerFlags,
+  EnvFlag,
   PaymentOrder,
   PaymentOrderStatus,
   PaymentStatusCode,
@@ -160,6 +161,7 @@ export const seedDemo = () =>
 // Server flags
 
 export const getServerFlags = () => json<ServerFlags>(`${API}/config/flags`);
+export const getEnvFlags = () => json<EnvFlag[]>(`${API}/config/env-flags`);
 
 // Payment orders
 

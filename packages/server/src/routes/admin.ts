@@ -11,6 +11,7 @@ import { RealtimeHub } from '../realtime/notifications.js';
 import { recordSubscriberActivated } from '../banking/order-events.js';
 import {
   allowPreActivation,
+  describeEnvFlags,
   edsHold,
   hacDownloadEvents,
   hacFormat,
@@ -275,6 +276,9 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
       wssOneTimeTokens: wssOneTimeTokens(),
     });
   });
+
+  /** Every environment flag with label, description, default, allowed values and current value */
+  app.get('/config/env-flags', (c) => c.json(describeEnvFlags()));
 
   app.route('/', createPaymentsAdminRoute(store));
   app.route('/', createVeuAdminRoute(store));

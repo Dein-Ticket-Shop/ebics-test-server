@@ -1,6 +1,7 @@
 import { xpathSelect } from '../protocol/xml-parser.js';
 import { validateIban, validateBic } from './iban.js';
 import type { AppStore } from '../store/types.js';
+import { strictValidation } from '../config/feature-flags.js';
 
 /**
  * Thrown when an uploaded payment carries a malformed IBAN or BIC. The BTU
@@ -51,15 +52,9 @@ export function validateOrderingAccount(
   }
 }
 
-/**
- * Strict validation is on by default: the server rejects malformed IBAN/BIC
- * values like a real bank, which is what makes the test server useful for
- * catching client bugs. Set EBICS_STRICT_VALIDATION=false to relax it and book
- * deliberately rough data anyway.
- */
+/** EBICS_STRICT_VALIDATION, on by default (described in ENV_FLAGS in config/feature-flags.ts) */
 export function isStrictValidation(): boolean {
-  const v = process.env['EBICS_STRICT_VALIDATION'];
-  return v !== 'false' && v !== '0';
+  return strictValidation();
 }
 
 /**

@@ -67,8 +67,10 @@ The subscriber page switches protocol downloads (HAC, PTK) on or off for that su
 (`PATCH /api/subscribers/:partnerId/:userId` with `{ "protocolDownloadsAllowed": false }`).
 Next to subscribers and banking data, the UI has pages for payment orders, the customer protocol, the
 VEU (sign or cancel held orders as a chosen user), Real-time (open connections, tokens, test messages)
-and Download Data (seed files per service, message name and ServiceOption). Host Config shows the
-active server flags.
+and Download Data (seed files per service, message name and ServiceOption). Host Config lists every
+environment flag with its description, default, allowed values and current value. The descriptions live
+as data in `ENV_FLAGS` in `packages/server/src/config/feature-flags.ts` and are served by
+`GET /api/config/env-flags`.
 
 To develop the UI with hot reload, run it separately:
 

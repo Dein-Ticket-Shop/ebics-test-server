@@ -3,28 +3,26 @@
   import KeyCard from '$lib/components/KeyCard.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { configureHost } from '$lib/api.js';
-  import type { HostConfig, ServerFlags } from '$lib/types.js';
+  import type { EnvFlag, EnvFlagValue, HostConfig } from '$lib/types.js';
 
   interface Props {
-    data: { host: HostConfig | null; flags: ServerFlags | null };
+    data: { host: HostConfig | null; envFlags: EnvFlag[] | null };
   }
 
   let { data }: Props = $props();
 
-  const flagRows = $derived(
-    data.flags
-      ? [
-          { env: 'EBICS_HAC_FORMAT', label: 'HAC format', value: data.flags.hacFormat },
-          { env: 'EBICS_EDS_HOLD', label: 'Hold EDS uploads in the VEU', value: data.flags.edsHold },
-          { env: 'EBICS_VOP_DEFAULT', label: 'VoP result for other banks', value: data.flags.vopDefault },
-          { env: 'EBICS_STRICT_VALIDATION', label: 'Strict IBAN/BIC and account validation', value: data.flags.strictValidation },
-          { env: 'EBICS_ALLOW_PREACTIVATION', label: 'HPB before activation', value: data.flags.allowPreActivation },
-          { env: 'EBICS_HAC_DOWNLOAD_EVENTS', label: 'FILE_DOWNLOAD events in HAC', value: data.flags.hacDownloadEvents },
-          { env: 'EBICS_VOP_CONFIRMATION', label: 'Hold orders until VoP is confirmed', value: data.flags.vopConfirmation },
-          { env: 'EBICS_WSS_ONE_TIME_TOKEN', label: 'One-time WebSocket tokens', value: data.flags.wssOneTimeTokens },
-        ]
-      : [],
-  );
+  /** Splits a description into text and `code` parts (odd indexes are code) */
+  function descriptionParts(description: string): string[] {
+    return description.split('`');
+  }
+
+  function formatValue(value: EnvFlagValue): string {
+    return String(value);
+  }
+
+  function allowedValues(flag: EnvFlag): string {
+    return (flag.options ?? ['true', 'false']).join(' | ');
+  }
 
   let showReconfigure = $state(false);
   let newHostId = $state('');
@@ -101,33 +99,57 @@
   </div>
 {/if}
 
-{#if data.flags}
-  <h2 class="text-lg font-semibold mt-8 mb-4">Server flags</h2>
+{#if data.envFlags}
+  <h2 class="text-lg font-semibold mt-8 mb-1">Environment flags</h2>
+  <p class="text-xs text-base-content/50 mb-4">
+    Read from the server environment on every request. Set them when starting the server; they cannot be changed here.
+  </p>
   <div class="overflow-x-auto bg-base-200 rounded-xl">
-    <table class="table table-sm">
+    <table class="table table-sm align-top">
       <thead>
         <tr>
-          <th>Setting</th>
-          <th>Environment variable</th>
+          <th>Flag</th>
           <th>Value</th>
+          <th>Default</th>
+          <th>Allowed</th>
+          <th class="min-w-80">Description</th>
         </tr>
       </thead>
       <tbody>
-        {#each flagRows as row (row.env)}
+        {#each data.envFlags as flag (flag.key)}
           <tr>
-            <td class="text-sm">{row.label}</td>
-            <td class="font-mono text-xs">{row.env}</td>
             <td>
-              {#if typeof row.value === 'boolean'}
-                <span class="badge badge-sm {row.value ? 'badge-success' : 'badge-ghost'}">{row.value ? 'on' : 'off'}</span>
-              {:else}
-                <span class="font-mono text-sm">{row.value}</span>
-              {/if}
+              <div class="text-sm font-medium whitespace-nowrap">{flag.label}</div>
+              <div class="font-mono text-xs text-base-content/60">{flag.env}</div>
+            </td>
+            <td>
+              <div class="flex flex-col items-start gap-1">
+                {#if flag.type === 'boolean'}
+                  <span class="badge badge-sm {flag.value ? 'badge-success' : 'badge-ghost'}">{flag.value ? 'on' : 'off'}</span>
+                {:else}
+                  <span class="badge badge-sm badge-info font-mono whitespace-nowrap">{formatValue(flag.value)}</span>
+                {/if}
+                {#if flag.ignored}
+                  <span class="badge badge-sm badge-warning whitespace-nowrap" title="Not a recognised value, the default applies">
+                    ignored: {flag.raw}
+                  </span>
+                {:else if flag.raw !== null}
+                  <span class="text-xs text-base-content/50">set</span>
+                {:else}
+                  <span class="text-xs text-base-content/40">default</span>
+                {/if}
+              </div>
+            </td>
+            <td class="font-mono text-xs whitespace-nowrap">{formatValue(flag.defaultValue)}</td>
+            <td class="font-mono text-xs whitespace-nowrap">{allowedValues(flag)}</td>
+            <td class="text-xs text-base-content/70">
+              {#each descriptionParts(flag.description) as part, i (i)}
+                {#if i % 2 === 1}<code class="font-mono bg-base-300 rounded px-1">{part}</code>{:else}{part}{/if}
+              {/each}
             </td>
           </tr>
         {/each}
       </tbody>
     </table>
   </div>
-  <p class="text-xs text-base-content/40 mt-2">Flags are read from the server environment and cannot be changed here.</p>
 {/if}
