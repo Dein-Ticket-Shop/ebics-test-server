@@ -97,6 +97,28 @@ To develop the UI with hot reload, run it separately:
 pnpm dev:admin
 ```
 
+## Docker
+
+Every `v*` tag, for example `v0.2.0`, publishes an image with the admin UI to the GitHub Container Registry of the
+repository it was pushed to, for `linux/amd64` and `linux/arm64`:
+
+```bash
+docker run -p 4150:4150 -v ebics-data:/data ghcr.io/kage0x3b/ebics-test-server
+```
+
+The SQLite database lives in the `/data` volume. Remove the volume to start with a fresh bank. Pass settings from
+[Configuration](#configuration) with `-e`, for example `-e EBICS_ALLOW_PREACTIVATION=true`.
+
+A tag `v1.2.3` is published as `1.2.3`, `1.2`, `1` and `latest`. A fork publishes to
+`ghcr.io/<fork owner>/ebics-test-server`. GitHub creates a new package as private, so make it public in the package
+settings once if you want to pull without logging in.
+
+To build it locally:
+
+```bash
+docker build -t ebics-test-server .
+```
+
 ## Connecting a client
 
 Use these defaults when you set up the bank connection in your EBICS client:
@@ -155,6 +177,8 @@ structured output you can ship or grep.
 pnpm test
 pnpm typecheck
 ```
+
+GitHub Actions runs both on every push and pull request.
 
 ## Project layout
 

@@ -24,3 +24,8 @@ const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`DB: ${DB_PATH}`);
 });
 realtime.attach(server as HttpServer);
+
+// Node ignores SIGINT and SIGTERM when it runs as PID 1 in a container, so `docker stop` would wait for SIGKILL
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => process.exit(0));
+}
