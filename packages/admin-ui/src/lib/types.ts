@@ -20,6 +20,8 @@ export interface Subscriber {
   userId: string;
   state: SubscriberState;
   keys: SubscriberKeys;
+  /** May download the customer protocol (HAC, PTK); otherwise 090003 */
+  protocolDownloadsAllowed: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -248,7 +250,6 @@ export interface ServerFlags {
   strictValidation: boolean;
   allowPreActivation: boolean;
   hacDownloadEvents: boolean;
-  hacDeniedPartners: string[];
   vopConfirmation: boolean;
   wssOneTimeTokens: boolean;
 }

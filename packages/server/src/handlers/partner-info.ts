@@ -131,3 +131,13 @@ export function buildUserPermissions(userInfo: XMLBuilder, orderTypes: OrderType
     }
   }
 }
+
+/** AdminOrderTypes of the customer protocol; a subscriber may be denied them (090003) */
+export const PROTOCOL_ORDER_TYPES: readonly string[] = ['HAC', 'PTK'];
+
+/** The order types listed as Permission for a subscriber in HKD/HTD */
+export function permittedOrderTypes(subscriber: { protocolDownloadsAllowed: boolean }): OrderTypeInfo[] {
+  return subscriber.protocolDownloadsAllowed
+    ? SUPPORTED_ORDER_TYPES
+    : SUPPORTED_ORDER_TYPES.filter((ot) => !PROTOCOL_ORDER_TYPES.includes(ot.adminType));
+}

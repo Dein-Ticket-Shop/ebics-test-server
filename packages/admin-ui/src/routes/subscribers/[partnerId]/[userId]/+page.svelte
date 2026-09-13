@@ -4,7 +4,7 @@
   import StateBadge from '$lib/components/StateBadge.svelte';
   import CertFingerprint from '$lib/components/CertFingerprint.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { activateSubscriber, suspendSubscriber, reactivateSubscriber, deleteSubscriber } from '$lib/api.js';
+  import { activateSubscriber, suspendSubscriber, reactivateSubscriber, deleteSubscriber, updateSubscriber } from '$lib/api.js';
   import type { Subscriber } from '$lib/types.js';
 
   interface Props {
@@ -49,6 +49,23 @@
       await invalidateAll();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Reactivation failed');
+    }
+  }
+
+  let savingPermissions = $state(false);
+
+  async function handleProtocolDownloads(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const allowed = input.checked;
+    savingPermissions = true;
+    try {
+      await updateSubscriber(sub.partnerId, sub.userId, { protocolDownloadsAllowed: allowed });
+      await invalidateAll();
+    } catch (err) {
+      input.checked = !allowed;
+      alert(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      savingPermissions = false;
     }
   }
 
@@ -135,6 +152,27 @@
     All EBICS requests from this subscriber are rejected. This may have been triggered by an SPR request from the client or by an admin action. Click <strong>Reactivate</strong> to restore access.
   </div>
 {/if}
+
+<!-- Permissions -->
+<h2 class="text-lg font-semibold mb-4">Permissions</h2>
+<div class="bg-base-200 rounded-xl p-4 mb-6">
+  <label class="flex items-start gap-3 cursor-pointer">
+    <input
+      type="checkbox"
+      class="toggle toggle-success toggle-sm mt-0.5"
+      checked={sub.protocolDownloadsAllowed}
+      disabled={savingPermissions}
+      onchange={handleProtocolDownloads}
+    />
+    <span>
+      <span class="text-sm font-medium">Protocol downloads (<span class="font-mono">HAC</span>, <span class="font-mono">PTK</span>)</span>
+      <span class="block text-xs text-base-content/50 mt-0.5">
+        When off, HAC and PTK downloads of this subscriber are refused with <span class="font-mono">090003</span>
+        (EBICS_AUTHORISATION_ORDER_TYPE_FAILED) and HKD/HTD no longer list them as permissions of this user.
+      </span>
+    </span>
+  </label>
+</div>
 
 <!-- Key overview -->
 <div class="flex items-center justify-between mb-4">

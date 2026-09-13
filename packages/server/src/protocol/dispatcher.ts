@@ -31,7 +31,8 @@ import { OrderRejection } from '../handlers/handler-types.js';
 import { recordEvent, recordUploadCompleted, recordUploadRejected } from '../banking/order-events.js';
 import { handleHvd, handleHvt, handleHvz, processVeuSignature } from '../handlers/veu.js';
 import { handlePtk } from '../handlers/ptk.js';
-import { hacDeniedPartners, hacDownloadEvents } from '../config/feature-flags.js';
+import { hacDownloadEvents } from '../config/feature-flags.js';
+import { PROTOCOL_ORDER_TYPES } from '../handlers/partner-info.js';
 
 export interface DispatcherConfig {
   hostId: string;
@@ -220,7 +221,8 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     return processVeuSignature(ctx, store, subscriber, hostConfig, orderType);
   }
 
-  if ((orderType === 'HAC' || orderType === 'PTK') && hacDeniedPartners().includes(partnerId)) {
+  // Customer protocol downloads can be switched off per subscriber in the admin API/UI
+  if (PROTOCOL_ORDER_TYPES.includes(orderType) && !subscriber.protocolDownloadsAllowed) {
     return buildEbicsResponse({
       technicalCode: ReturnCode.EBICS_OK,
       businessCode: ReturnCode.EBICS_AUTHORISATION_ORDER_TYPE_FAILED,

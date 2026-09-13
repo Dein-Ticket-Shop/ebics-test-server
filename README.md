@@ -25,7 +25,7 @@ inspect every request and response.
 - Delivery tracking: downloads without a DateRange return only data not yet fetched, confirmed by a positive receipt
 - HAC customer protocol in pain.002.001.03 format (opt-in), fed by an event ledger of the bank-side order lifecycle, with German protocol text for credit transfers and direct debits
 - PTK customer protocol as ISO-8859-1 text, rendered from the same event ledger
-- Optional `FILE_DOWNLOAD` events in the customer protocol, and a partner deny list for HAC and PTK (`090003`)
+- Optional `FILE_DOWNLOAD` events in the customer protocol, and protocol downloads (HAC and PTK) switchable per subscriber in the admin API/UI (`090003` when off)
 - Seeded download data per service, message name and ServiceOption
 - Real-time notifications (DK Anlage 2 V1.0): BTD OTH/DE/wssparam returns a token, the `/realtime` WebSocket pushes EBICS-HAA messages for new bookings, payment status, payment orders and HAC events to connected clients
 - XML signing and schema validation on both requests and responses
@@ -63,6 +63,8 @@ pnpm dev
 
 Then open http://localhost:4150/admin.
 
+The subscriber page switches protocol downloads (HAC, PTK) on or off for that subscriber
+(`PATCH /api/subscribers/:partnerId/:userId` with `{ "protocolDownloadsAllowed": false }`).
 Next to subscribers and banking data, the UI has pages for payment orders, the customer protocol, the
 VEU (sign or cancel held orders as a chosen user), Real-time (open connections, tokens, test messages)
 and Download Data (seed files per service, message name and ServiceOption). Host Config shows the
@@ -117,7 +119,6 @@ All settings are read from the environment:
 | `EBICS_VOP_DEFAULT`        | `RCVC`           | VoP result for creditors not held at this bank (`RCVC`, `RVMC`, `RVNM`, `RVNA`) |
 | `EBICS_VOP_CONFIRMATION`   | `false`          | Hold credit transfers whose VoP group result is not `RCVC` until an HVE signature or an admin release |
 | `EBICS_HAC_DOWNLOAD_EVENTS`| `false`          | Add a `FILE_DOWNLOAD` event to the customer protocol for every download except HAC and PTK |
-| `EBICS_HAC_DENY_PARTNERS`  | unset            | Comma-separated partner IDs whose HAC and PTK downloads are answered with `090003` |
 | `EBICS_WSS_ONE_TIME_TOKEN` | `false`          | wssparam tokens open one WebSocket connection (`OTT` `Y`); by default a token can reconnect for one hour |
 | `EBICS_LOG_LEVEL`          | `info`           | Log level (`trace`..`fatal`, or `silent`)    |
 | `EBICS_QUIET`              | `false`          | Shorthand for `silent` logging               |

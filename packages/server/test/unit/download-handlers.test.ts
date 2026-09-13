@@ -20,6 +20,7 @@ const testSubscriber: Subscriber = {
   userId: 'USER1',
   state: SubscriberState.READY,
   keys: {},
+  protocolDownloadsAllowed: true,
   createdAt: '2026-01-01',
   updatedAt: '2026-01-01',
 };

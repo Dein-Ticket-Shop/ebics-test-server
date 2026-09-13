@@ -5,6 +5,7 @@ import { EBICS_NS } from '../protocol/constants.js';
 import {
   buildPartnerInfo,
   buildUserPermissions,
+  permittedOrderTypes,
   userStatusFromState,
   SUPPORTED_ORDER_TYPES,
 } from './partner-info.js';
@@ -32,7 +33,7 @@ export function handleHkd(
       .att('Status', userStatusFromState(sub.state))
       .txt(sub.userId);
     userInfo.ele(EBICS_NS.H005, 'Name').txt(sub.userId);
-    buildUserPermissions(userInfo, SUPPORTED_ORDER_TYPES);
+    buildUserPermissions(userInfo, permittedOrderTypes(sub));
   }
 
   return root.end({ prettyPrint: true });

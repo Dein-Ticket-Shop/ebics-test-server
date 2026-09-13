@@ -13,6 +13,9 @@
   let { data }: Props = $props();
 
   const partners = $derived([...new Set(data.subscribers.map((s) => s.partnerId))].sort());
+  const deniedSubscribers = $derived(
+    data.subscribers.filter((s) => !s.protocolDownloadsAllowed && (!data.partnerId || s.partnerId === data.partnerId)),
+  );
 
   let expanded = $state<number | null>(null);
 
@@ -146,10 +149,13 @@
   </div>
 {/if}
 
-{#if data.flags?.hacDeniedPartners?.length}
+{#if deniedSubscribers.length > 0}
   <div class="bg-warning/10 border border-warning/20 rounded-xl p-4 mb-6 text-sm">
     HAC and PTK downloads are refused with <span class="font-mono">090003</span> for
-    <span class="font-mono">{data.flags.hacDeniedPartners.join(', ')}</span> (<span class="font-mono">EBICS_HAC_DENY_PARTNERS</span>).
+    {#each deniedSubscribers as sub, i (`${sub.partnerId}/${sub.userId}`)}{i > 0 ? ', ' : ''}<a
+        href="{base}/subscribers/{sub.partnerId}/{sub.userId}"
+        class="link font-mono">{sub.partnerId}/{sub.userId}</a
+      >{/each}. Protocol downloads are switched on and off on the subscriber page.
   </div>
 {/if}
 

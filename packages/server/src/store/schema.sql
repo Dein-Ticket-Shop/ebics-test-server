@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     authentication_certificate TEXT,
     encryption_version TEXT,
     encryption_certificate TEXT,
+    protocol_downloads_allowed INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (partner_id, user_id)

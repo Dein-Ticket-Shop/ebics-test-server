@@ -25,6 +25,8 @@ export interface Subscriber {
   userId: string;
   state: SubscriberState;
   keys: SubscriberKeys;
+  /** May download the customer protocol (HAC, PTK); otherwise 090003. Set per subscriber in the admin API/UI. */
+  protocolDownloadsAllowed: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -132,6 +134,7 @@ export interface EbicsStore {
   listSubscribers(): Subscriber[];
   updateSubscriberState(partnerId: string, userId: string, state: SubscriberState): void;
   updateSubscriberKeys(partnerId: string, userId: string, keys: Partial<SubscriberKeys>): void;
+  setSubscriberProtocolDownloads(partnerId: string, userId: string, allowed: boolean): void;
   deleteSubscriber(partnerId: string, userId: string): void;
 
   storeNonce(nonce: string, timestamp: string): void;

@@ -12,7 +12,9 @@ Deviations from the plan below (updated 2026-09-13):
   then gets its own OrderID and carries the BTF attributes of the request.
 - No dialect or language flags: one German, Sparkasse-style attribute set. `Scope` and `ContainerType`
   appear only when an event carries them.
-- The `090003` deny list is `EBICS_HAC_DENY_PARTNERS=comma,separated,partner,ids` and covers PTK too.
+- `090003` is a per-subscriber setting instead of a flag: `protocolDownloadsAllowed` on the subscriber
+  (admin API `PATCH /api/subscribers/:partnerId/:userId`, toggle on the subscriber page) covers HAC and
+  PTK, and HKD/HTD leave both out of that user's permissions.
 - Admin routes are `GET/POST /api/hac-events`, `GET /api/hac/report?partnerId=` and
   `POST /api/payments/:id/release|cancel|reject` instead of `/api/uploaded-orders/:id/hac/final`.
   `GET /api/ptk/report?partnerId=` previews the text protocol.
@@ -229,9 +231,9 @@ default `bil`) picks the attribute set (Scope/ContainerType only for `sparkasse`
 
 ### 3.5 Return-code realism
 
-- Subscriber not authorised for HAC → `090003` (add a per-subscriber `order_types` allow-list? overkill;
-  feature-flag `EBICS_HAC_DENY_PARTNERS=comma,list` is enough for the luxfit "090003 → surface in admin"
-  test).
+- Subscriber not authorised for HAC → `090003`. Implemented as a per-subscriber
+  `protocolDownloadsAllowed` setting (admin API/UI) rather than an environment flag, which is enough for
+  the luxfit "090003 → surface in admin" test.
 
 ### 3.6 Admin API / UI
 

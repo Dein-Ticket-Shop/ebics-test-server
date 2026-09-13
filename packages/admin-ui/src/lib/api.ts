@@ -67,6 +67,11 @@ export const reactivateSubscriber = (partnerId: string, userId: string) =>
   json<Subscriber>(`${API}/subscribers/${encodeURIComponent(partnerId)}/${encodeURIComponent(userId)}/reactivate`, {
     method: 'POST',
   });
+export const updateSubscriber = (partnerId: string, userId: string, patch: { protocolDownloadsAllowed: boolean }) =>
+  json<Subscriber>(`${API}/subscribers/${encodeURIComponent(partnerId)}/${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
 export const deleteSubscriber = (partnerId: string, userId: string) =>
   json<{ status: string }>(`${API}/subscribers/${encodeURIComponent(partnerId)}/${encodeURIComponent(userId)}`, {
     method: 'DELETE',

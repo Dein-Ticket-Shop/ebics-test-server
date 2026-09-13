@@ -87,7 +87,14 @@
               <a href="{base}/subscribers/{sub.partnerId}/{sub.userId}" class="link link-hover">{sub.partnerId}</a>
             </td>
             <td class="font-mono">{sub.userId}</td>
-            <td><StateBadge state={sub.state} /></td>
+            <td>
+              <div class="flex flex-wrap items-center gap-1">
+                <StateBadge state={sub.state} />
+                {#if !sub.protocolDownloadsAllowed}
+                  <span class="badge badge-sm badge-warning" title="HAC and PTK downloads are refused with 090003">no HAC/PTK</span>
+                {/if}
+              </div>
+            </td>
             <td class="text-sm text-base-content/50">{new Date(sub.createdAt + 'Z').toLocaleDateString()}</td>
             <td>
               <div class="flex gap-1 justify-end">

@@ -12,7 +12,6 @@ import { recordSubscriberActivated } from '../banking/order-events.js';
 import {
   allowPreActivation,
   edsHold,
-  hacDeniedPartners,
   hacDownloadEvents,
   hacFormat,
   vopConfirmationRequired,
@@ -90,6 +89,25 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
     const subscriber = store.getSubscriber(partnerId, userId);
     if (!subscriber) return c.json({ error: 'Not found' }, 404);
     return c.json(subscriber);
+  });
+
+  /** Per-subscriber settings: { protocolDownloadsAllowed: boolean } allows or refuses HAC and PTK (090003) */
+  app.patch('/subscribers/:partnerId/:userId', async (c) => {
+    const { partnerId, userId } = c.req.param();
+    if (!store.getSubscriber(partnerId, userId)) return c.json({ error: 'Not found' }, 404);
+    const body = (await c.req.json().catch(() => ({}))) as { protocolDownloadsAllowed?: unknown };
+    if (typeof body.protocolDownloadsAllowed !== 'boolean') {
+      return c.json({ error: 'protocolDownloadsAllowed (boolean) is required' }, 400);
+    }
+
+    store.setSubscriberProtocolDownloads(partnerId, userId, body.protocolDownloadsAllowed);
+    store.logActivity({
+      eventType: 'subscriber_updated',
+      partnerId,
+      userId,
+      details: { protocolDownloadsAllowed: body.protocolDownloadsAllowed },
+    });
+    return c.json(store.getSubscriber(partnerId, userId));
   });
 
   app.post('/subscribers/:partnerId/:userId/activate', (c) => {
@@ -253,7 +271,6 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
       strictValidation: isStrictValidation(),
       allowPreActivation: allowPreActivation(),
       hacDownloadEvents: hacDownloadEvents(),
-      hacDeniedPartners: hacDeniedPartners(),
       vopConfirmation: vopConfirmationRequired(),
       wssOneTimeTokens: wssOneTimeTokens(),
     });

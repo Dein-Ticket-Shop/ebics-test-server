@@ -154,7 +154,7 @@
 - [x] VEU orders HVZ, HVD, HVT, HVE, HVS: under EDS hold (`EBICS_EDS_HOLD=true`) a second distinct user must sign (the upload's signature counts as the first), duplicate HVE by the same user → `091306`, HVS cancels; bank-side `/api/veu/orders` and admin UI page "VEU"
 - [x] VoP confirmation (`EBICS_VOP_CONFIRMATION=true`): credit transfers whose VoP group result is not RCVC wait for an HVE signature (the uploader may confirm) or an admin release
 - [x] PTK customer protocol as ISO-8859-1 text rendered from the HAC event ledger, delivered once without DateRange; admin preview `GET /api/ptk/report`
-- [x] HAC/PTK deny list (`EBICS_HAC_DENY_PARTNERS=PARTNER1,PARTNER2`) → `090003`
+- [x] Protocol downloads per subscriber (`PATCH /api/subscribers/:partnerId/:userId` `{ protocolDownloadsAllowed }`, toggle on the subscriber page): HAC/PTK → `090003` when off, and HKD/HTD drop them from the user's permissions
 - [x] FILE_DOWNLOAD HAC events (`EBICS_HAC_DOWNLOAD_EVENTS=true`): every download except HAC/PTK gets its own OrderID and the BTF attributes
 - [x] Protocol text for pain.008 ORDER_HAC_FINAL_POS (`L A S T S C H R I F T E N` with `Sammlerreferenz`)
 - [x] Download data keyed by ServiceOption (exact option wins over an entry without one, old tables rebuilt on startup), `DELETE /api/download-data/:id`, admin UI page "Download Data"

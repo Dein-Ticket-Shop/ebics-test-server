@@ -20,7 +20,6 @@
           { env: 'EBICS_STRICT_VALIDATION', label: 'Strict IBAN/BIC and account validation', value: data.flags.strictValidation },
           { env: 'EBICS_ALLOW_PREACTIVATION', label: 'HPB before activation', value: data.flags.allowPreActivation },
           { env: 'EBICS_HAC_DOWNLOAD_EVENTS', label: 'FILE_DOWNLOAD events in HAC', value: data.flags.hacDownloadEvents },
-          { env: 'EBICS_HAC_DENY_PARTNERS', label: 'Partners denied HAC/PTK', value: data.flags.hacDeniedPartners.join(', ') || '-' },
           { env: 'EBICS_VOP_CONFIRMATION', label: 'Hold orders until VoP is confirmed', value: data.flags.vopConfirmation },
           { env: 'EBICS_WSS_ONE_TIME_TOKEN', label: 'One-time WebSocket tokens', value: data.flags.wssOneTimeTokens },
         ]

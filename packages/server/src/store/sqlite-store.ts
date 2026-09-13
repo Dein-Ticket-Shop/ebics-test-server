@@ -48,6 +48,7 @@ export class SqliteStore implements AppStore {
     this.ensureColumn('uploaded_orders', 'order_id', 'TEXT');
     this.ensureColumn('payment_orders', 'signatures_required', 'INTEGER NOT NULL DEFAULT 1');
     this.ensureColumn('payment_orders', 'vop_confirmation_required', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('subscribers', 'protocol_downloads_allowed', 'INTEGER NOT NULL DEFAULT 1');
     this.migrateDownloadDataServiceOption();
   }
 
@@ -165,6 +166,13 @@ export class SqliteStore implements AppStore {
     this.db.prepare(
       `UPDATE subscribers SET ${sets.join(', ')} WHERE partner_id = ? AND user_id = ?`,
     ).run(...values, partnerId, userId);
+  }
+
+  setSubscriberProtocolDownloads(partnerId: string, userId: string, allowed: boolean): void {
+    this.db.prepare(`
+      UPDATE subscribers SET protocol_downloads_allowed = ?, updated_at = datetime('now')
+      WHERE partner_id = ? AND user_id = ?
+    `).run(allowed ? 1 : 0, partnerId, userId);
   }
 
   deleteSubscriber(partnerId: string, userId: string): void {
@@ -1001,6 +1009,7 @@ export class SqliteStore implements AppStore {
         encryptionVersion: row['encryption_version'] ?? undefined,
         encryptionCertificate: row['encryption_certificate'] ?? undefined,
       },
+      protocolDownloadsAllowed: Number(row['protocol_downloads_allowed'] ?? 1) !== 0,
       createdAt: row['created_at']!,
       updatedAt: row['updated_at']!,
     };

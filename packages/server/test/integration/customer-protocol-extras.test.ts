@@ -19,7 +19,6 @@ const FLAGS = [
   'EBICS_EDS_HOLD',
   'EBICS_VOP_DEFAULT',
   'EBICS_VOP_CONFIRMATION',
-  'EBICS_HAC_DENY_PARTNERS',
   'EBICS_HAC_DOWNLOAD_EVENTS',
   'EBICS_STRICT_VALIDATION',
 ] as const;
@@ -316,16 +315,33 @@ describe('Customer protocol extras', () => {
     });
   });
 
-  describe('HAC/PTK deny list', () => {
+  describe('protocol download permission per subscriber', () => {
     beforeEach(async () => {
       ctx = await setup();
     });
 
-    it('answers HAC and PTK downloads of listed partners with 090003', async () => {
-      process.env['EBICS_HAC_DENY_PARTNERS'] = ' OTHER , PARTNER1 ,';
+    const subscriberPath = `/subscribers/${PARTNER_ID}/${USER_ID}`;
+    const setPermission = (allowed: unknown) => api(ctx, subscriberPath, { method: 'PATCH', body: { protocolDownloadsAllowed: allowed } });
+    /** HAC/PTK entries in HKD/HTD: two OrderInfo entries of the partner plus two Permission entries per permitted user */
+    const protocolOrderTypes = (xml: string) => xml.match(/AdminOrderType>(HAC|PTK)</g)?.length ?? 0;
+
+    it('is allowed for new subscribers', async () => {
+      process.env['EBICS_HAC_FORMAT'] = 'pain.002';
+      expect((await api(ctx, subscriberPath)).json.protocolDownloadsAllowed).toBe(true);
+      expect((await downloadOrder(ctx.session, 'HAC')).code).toBe('000000');
+      expect((await downloadOrder(ctx.session, 'PTK')).code).toBe('000000');
+      expect(protocolOrderTypes((await downloadOrder(ctx.session, 'HTD')).data!.toString('utf8'))).toBe(4);
+    });
+
+    it('answers HAC and PTK with 090003 when switched off and drops them from the user permissions', async () => {
       process.env['EBICS_HAC_DOWNLOAD_EVENTS'] = 'true';
       process.env['EBICS_HAC_FORMAT'] = 'pain.002';
-      expect((await api(ctx, '/config/flags')).json.hacDeniedPartners).toEqual(['OTHER', PARTNER_ID]);
+
+      const updated = await setPermission(false);
+      expect(updated.status).toBe(200);
+      expect(updated.json).toMatchObject({ partnerId: PARTNER_ID, userId: USER_ID, protocolDownloadsAllowed: false });
+      expect(ctx.store.getSubscriber(PARTNER_ID, USER_ID)!.protocolDownloadsAllowed).toBe(false);
+      expect((await api(ctx, '/subscribers')).json[0].protocolDownloadsAllowed).toBe(false);
 
       const eventsBefore = ctx.store.listHacEvents().length;
       for (const orderType of ['HAC', 'PTK']) {
@@ -339,15 +355,22 @@ describe('Customer protocol extras', () => {
       // A denied download is no download: no FILE_DOWNLOAD event
       expect(ctx.store.listHacEvents()).toHaveLength(eventsBefore);
 
-      // Other order types are not affected
-      expect((await downloadOrder(ctx.session, 'HKD')).code).toBe('000000');
+      // Other order types are not affected; the partner still offers HAC/PTK, the user is no longer permitted
+      const hkd = await downloadOrder(ctx.session, 'HKD');
+      expect(hkd.code).toBe('000000');
+      expect(protocolOrderTypes(hkd.data!.toString('utf8'))).toBe(2);
+      expect(protocolOrderTypes((await downloadOrder(ctx.session, 'HTD')).data!.toString('utf8'))).toBe(2);
+
+      // Switched on again
+      expect((await setPermission(true)).json.protocolDownloadsAllowed).toBe(true);
+      expect((await downloadOrder(ctx.session, 'PTK')).code).toBe('000000');
     });
 
-    it('serves partners that are not listed', async () => {
-      process.env['EBICS_HAC_DENY_PARTNERS'] = 'OTHER,PARTNER10';
-      process.env['EBICS_HAC_FORMAT'] = 'pain.002';
-      expect((await downloadOrder(ctx.session, 'HAC')).code).toBe('000000');
-      expect((await downloadOrder(ctx.session, 'PTK')).code).toBe('000000');
+    it('validates the admin update', async () => {
+      expect((await setPermission('no')).status).toBe(400);
+      expect((await api(ctx, subscriberPath, { method: 'PATCH' })).status).toBe(400);
+      expect((await api(ctx, '/subscribers/NOPE/NOBODY', { method: 'PATCH', body: { protocolDownloadsAllowed: false } })).status).toBe(404);
+      expect(ctx.store.getSubscriber(PARTNER_ID, USER_ID)!.protocolDownloadsAllowed).toBe(true);
     });
   });
 

@@ -87,19 +87,6 @@ export function hacDownloadEvents(): boolean {
 }
 
 /**
- * Partner IDs that are not authorised for the customer protocol: their HAC and PTK downloads are
- * answered with EBICS_AUTHORISATION_ORDER_TYPE_FAILED (090003).
- *
- * Set `EBICS_HAC_DENY_PARTNERS=PARTNER1,PARTNER2`.
- */
-export function hacDeniedPartners(): string[] {
-  return (process.env['EBICS_HAC_DENY_PARTNERS'] ?? '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean);
-}
-
-/**
  * When true, credit transfers whose Verification of Payee result is not a full match (RCVC) are held
  * in the VEU until someone confirms them with an electronic signature (HVE) or an admin releases
  * them. Default (false): orders are executed regardless of the VoP result.
