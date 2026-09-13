@@ -13,8 +13,15 @@ inspect every request and response.
 - Key exchange: INI, HIA, HPB, plus key management (HCA, HCS, PUB, SPR)
 - Order info downloads: HEV, HPD, HKD, HTD, HAA, HAC
 - Generic upload and download: BTU and BTD with BTF service parameters
-- Payment processing: parses pain.001 credit transfers
+- Payment processing: parses pain.001 credit transfers and pain.008 direct debits
+- SEPA Instant uploads (BTU SCI pain.001) as payment orders with Verification of Payee and a payment status history
+- Optional EDS hold: uploads that request a distributed signature wait in the VEU until an admin releases, cancels or rejects them
+- EBICS OrderIDs on uploads and INI/HIA, echoed in every response of the transaction
 - Statement generation: camt.053 and MT940
+- Reports: camt.052 intraday reports, camt.054 notifications, pain.002 payment status reports and pain.002 Verification of Payee reports
+- ZIP containers for BTD downloads when the client requests `Container containerType="ZIP"`
+- Delivery tracking: downloads without a DateRange return only data not yet fetched, confirmed by a positive receipt
+- HAC customer protocol in pain.002.001.03 format (opt-in), fed by an event ledger of the bank-side order lifecycle
 - XML signing and schema validation on both requests and responses
 - SQLite storage that survives restarts
 - Admin UI for subscribers, banking data, and a full protocol log
@@ -92,6 +99,9 @@ All settings are read from the environment:
 | `EBICS_DB_PATH`            | `./ebics-test.db`| SQLite file, or `:memory:` for ephemeral runs |
 | `EBICS_ALLOW_PREACTIVATION`| `false`          | Allow HPB before the subscriber is activated |
 | `EBICS_STRICT_VALIDATION`  | `true`           | Reject uploads with malformed IBAN or BIC (returns `090004`); set `false` to relax |
+| `EBICS_HAC_FORMAT`         | `legacy`         | HAC order data format; `pain.002` returns the pain.002.001.03 customer protocol real banks send |
+| `EBICS_EDS_HOLD`           | `false`          | Hold uploads with `requestEDS="true"` in the VEU until released via the admin API or UI |
+| `EBICS_VOP_DEFAULT`        | `RCVC`           | VoP result for creditors not held at this bank (`RCVC`, `RVMC`, `RVNM`, `RVNA`) |
 | `EBICS_LOG_LEVEL`          | `info`           | Log level (`trace`..`fatal`, or `silent`)    |
 | `EBICS_QUIET`              | `false`          | Shorthand for `silent` logging               |
 | `EBICS_LOG_JSON`           | unset            | Force raw JSON logs (no pretty printing)      |

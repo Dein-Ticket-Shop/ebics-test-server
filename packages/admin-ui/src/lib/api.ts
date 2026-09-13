@@ -1,4 +1,23 @@
-import type { Subscriber, HostConfig, Stats, ActivityLogEntry, ProtocolLogSummary, ProtocolLogEntry, BankConfig, Person, Account, Booking } from './types.js';
+import type {
+  Subscriber,
+  HostConfig,
+  Stats,
+  ActivityLogEntry,
+  ProtocolLogSummary,
+  ProtocolLogEntry,
+  BankConfig,
+  Person,
+  Account,
+  Booking,
+  ServerFlags,
+  PaymentOrder,
+  PaymentOrderStatus,
+  PaymentStatusCode,
+  VopStatus,
+  HacEvent,
+  HacEventInput,
+  DeliveryKind,
+} from './types.js';
 
 const API = '/api';
 
@@ -80,7 +99,7 @@ export const listAccounts = () => json<Account[]>(`${BANK}/accounts`);
 export const getAccount = (id: number) => json<Account>(`${BANK}/accounts/${id}`);
 export const listAccountsForPerson = (personId: number) =>
   json<Account[]>(`${BANK}/persons/${personId}/accounts`);
-export const createAccount = (data: { personId: number; name: string; currency?: string }) =>
+export const createAccount = (data: { personId: number; name: string; currency?: string; accountNumber?: string }) =>
   json<Account>(`${BANK}/accounts`, { method: 'POST', body: JSON.stringify(data) });
 export const updateAccount = (id: number, patch: { name?: string; currency?: string }) =>
   json<Account>(`${BANK}/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
@@ -116,7 +135,9 @@ export const createBooking = (accountId: number, data: {
 export const deleteBooking = (accountId: number, bookingId: number) =>
   json<{ status: string }>(`${BANK}/accounts/${accountId}/bookings/${bookingId}`, { method: 'DELETE' });
 
-export const getStatementUrl = (accountId: number, format: 'camt.053' | 'mt940', from?: string, to?: string) => {
+export type StatementFormat = 'camt.052' | 'camt.053' | 'camt.054' | 'mt940';
+
+export const getStatementUrl = (accountId: number, format: StatementFormat, from?: string, to?: string) => {
   const params = new URLSearchParams({ format });
   if (from) params.set('from', from);
   if (to) params.set('to', to);
@@ -125,3 +146,53 @@ export const getStatementUrl = (accountId: number, format: 'camt.053' | 'mt940',
 
 export const seedDemo = () =>
   json<{ bank: BankConfig; persons: Person[]; accounts: Account[]; bookingCount: number }>(`${BANK}/seed/demo`, { method: 'POST' });
+
+// Server flags
+
+export const getServerFlags = () => json<ServerFlags>(`${API}/config/flags`);
+
+// Payment orders
+
+export const listPayments = (filter: { partnerId?: string; status?: PaymentOrderStatus } = {}) => {
+  const params = new URLSearchParams();
+  if (filter.partnerId) params.set('partnerId', filter.partnerId);
+  if (filter.status) params.set('status', filter.status);
+  const qs = params.toString();
+  return json<PaymentOrder[]>(`${API}/payments${qs ? `?${qs}` : ''}`);
+};
+export const getPayment = (id: number) => json<PaymentOrder>(`${API}/payments/${id}`);
+export const releasePayment = (id: number) =>
+  json<PaymentOrder>(`${API}/payments/${id}/release`, { method: 'POST' });
+export const cancelPayment = (id: number, data: { additionalInfo?: string[] } = {}) =>
+  json<PaymentOrder>(`${API}/payments/${id}/cancel`, { method: 'POST', body: JSON.stringify(data) });
+export const rejectPayment = (id: number, data: { reasonCode?: string; additionalInfo?: string[] } = {}) =>
+  json<PaymentOrder>(`${API}/payments/${id}/reject`, { method: 'POST', body: JSON.stringify(data) });
+export const addPaymentStatusEvent = (
+  id: number,
+  data: { status: PaymentStatusCode; reasonCode?: string; additionalInfo?: string[] },
+) => json<PaymentOrder>(`${API}/payments/${id}/status-events`, { method: 'POST', body: JSON.stringify(data) });
+export const overrideTransactionVop = (
+  id: number,
+  txId: number,
+  data: { status: VopStatus; correctedName?: string },
+) => json<PaymentOrder>(`${API}/payments/${id}/transactions/${txId}/vop`, { method: 'PATCH', body: JSON.stringify(data) });
+export const getPaymentStatusReportUrl = (id: number) => `${API}/payments/${id}/status-report`;
+export const getPaymentVopReportUrl = (id: number) => `${API}/payments/${id}/vop-report`;
+
+// Customer protocol (HAC)
+
+export const listHacEvents = (filter: { partnerId?: string; orderId?: string } = {}) => {
+  const params = new URLSearchParams();
+  if (filter.partnerId) params.set('partnerId', filter.partnerId);
+  if (filter.orderId) params.set('orderId', filter.orderId);
+  const qs = params.toString();
+  return json<HacEvent[]>(`${API}/hac-events${qs ? `?${qs}` : ''}`);
+};
+export const createHacEvent = (data: HacEventInput) =>
+  json<HacEvent>(`${API}/hac-events`, { method: 'POST', body: JSON.stringify(data) });
+export const getHacReportUrl = (partnerId: string) => `${API}/hac/report?partnerId=${encodeURIComponent(partnerId)}`;
+
+// Download delivery state
+
+export const resetDeliveries = (data: { partnerId?: string; kind?: DeliveryKind } = {}) =>
+  json<{ reset: number }>(`${API}/deliveries/reset`, { method: 'POST', body: JSON.stringify(data) });

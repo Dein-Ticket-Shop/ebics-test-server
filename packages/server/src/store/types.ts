@@ -86,6 +86,14 @@ export interface Transaction {
   signatureData?: string;
   serviceName?: string;
   msgName?: string;
+  /** EBICS OrderID allocated for uploads (returned in the upload responses) */
+  orderId?: string;
+  serviceOption?: string;
+  /** BTUOrderParams/SignatureFlag/@requestEDS of an upload */
+  requestEds?: boolean;
+  /** Download items handed out by this transaction, marked delivered on a positive receipt */
+  deliveryKind?: DeliveryKind;
+  deliveryKeys?: string[];
   createdAt: string;
   expiresAt: string;
 }
@@ -98,6 +106,7 @@ export interface UploadedOrder {
   msgName?: string;
   rawContent: string;
   processed: boolean;
+  orderId?: string;
   createdAt: string;
 }
 
@@ -145,7 +154,7 @@ export interface EbicsStore {
   getDownloadData(serviceName: string, msgName?: string): DownloadData | undefined;
   listDownloadData(): DownloadData[];
 
-  createUploadedOrder(data: Omit<UploadedOrder, 'id' | 'processed' | 'createdAt'>): UploadedOrder;
+  createUploadedOrder(data: Omit<UploadedOrder, 'id' | 'processed' | 'createdAt' | 'orderId'> & { orderId?: string }): UploadedOrder;
   listUploadedOrders(): UploadedOrder[];
   getUploadedOrder(id: number): UploadedOrder | undefined;
   markUploadedOrderProcessed(id: number): void;
@@ -231,4 +240,144 @@ export interface BankingStore {
   getNextAccountSequence(): number;
 }
 
-export type AppStore = EbicsStore & BankingStore;
+// Order lifecycle: EBICS order IDs, HAC event ledger, credit transfer orders, download deliveries
+
+import type { VopStatus } from '../config/feature-flags.js';
+export type { VopStatus };
+
+/** HAC action types (EBICS 3.0 Annex, customer acknowledgement) */
+export type HacAction =
+  | 'FILE_UPLOAD'
+  | 'FILE_DOWNLOAD'
+  | 'ES_UPLOAD'
+  | 'ES_DOWNLOAD'
+  | 'ES_VERIFICATION'
+  | 'VEU_FORWARDING'
+  | 'VEU_VERIFICATION'
+  | 'VEU_VERIFICATION_END'
+  | 'VEU_CANCEL_ORDER'
+  | 'ADDITIONAL'
+  | 'ORDER_HAC_FINAL_POS'
+  | 'ORDER_HAC_FINAL_NEG';
+
+export interface HacEvent {
+  id: number;
+  partnerId: string;
+  /** Omitted for FINAL_* events, like real banks do */
+  userId?: string;
+  orderId: string;
+  action: string;
+  adminOrderType: string;
+  serviceName?: string;
+  serviceOption?: string;
+  scope?: string;
+  containerType?: string;
+  msgName?: string;
+  orderIdRef?: string;
+  adminOrderTypeRef?: string;
+  reasonCode?: string;
+  additionalInfo: string[];
+  /** ISO timestamp with milliseconds; strictly increasing per partner so clients can use it as idempotency key */
+  eventAt: string;
+  uploadedOrderId?: number;
+}
+
+export type NewHacEvent = Omit<HacEvent, 'id' | 'eventAt' | 'additionalInfo'> & {
+  eventAt?: string;
+  additionalInfo?: string[];
+};
+
+export type PaymentOrderStatus = 'PENDING_EDS' | 'EXECUTED' | 'CANCELLED' | 'REJECTED';
+export type PaymentStatusCode = 'ACTC' | 'ACCP' | 'ACSP' | 'ACSC' | 'ACWC' | 'RJCT';
+
+/** One pain.001 PmtInf (Sammler) received in an upload */
+export interface PaymentOrder {
+  id: number;
+  orderId: string;
+  uploadedOrderId?: number;
+  partnerId: string;
+  userId: string;
+  serviceName: string;
+  serviceOption?: string;
+  msgName: string;
+  /** GrpHdr/MsgId of the pain.001 file */
+  msgId: string;
+  /** PmtInf/PmtInfId (Sammlerreferenz) */
+  pmtInfId: string;
+  debtorName?: string;
+  debtorIban?: string;
+  requestedEds: boolean;
+  status: PaymentOrderStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentTransaction {
+  id: number;
+  paymentOrderId: number;
+  endToEndId?: string;
+  creditorName?: string;
+  creditorIban?: string;
+  creditorBic?: string;
+  amountCents: number;
+  currency: string;
+  remittanceInfo?: string;
+  vopStatus: VopStatus;
+  vopCorrectedName?: string;
+  debitBookingId?: number;
+  creditBookingId?: number;
+}
+
+export interface PaymentStatusEvent {
+  id: number;
+  paymentOrderId: number;
+  status: PaymentStatusCode;
+  reasonCode?: string;
+  additionalInfo: string[];
+  createdAt: string;
+}
+
+export type NewPaymentOrder = Omit<PaymentOrder, 'id' | 'createdAt' | 'updatedAt'>;
+export type NewPaymentTransaction = Omit<PaymentTransaction, 'id' | 'paymentOrderId'>;
+
+/** Download services that hand out each item once when no DateRange is requested */
+export type DeliveryKind = 'camt.054' | 'psr' | 'vop' | 'hac';
+
+export interface DateFilter {
+  /** inclusive, YYYY-MM-DD */
+  from?: string;
+  /** inclusive, YYYY-MM-DD */
+  to?: string;
+}
+
+export interface OrderLedgerStore {
+  nextOrderId(partnerId: string): string;
+
+  appendHacEvent(event: NewHacEvent): HacEvent;
+  getHacEvent(id: number): HacEvent | undefined;
+  listHacEvents(filter?: { partnerId?: string; orderId?: string } & DateFilter): HacEvent[];
+
+  createPaymentOrder(order: NewPaymentOrder, transactions: NewPaymentTransaction[]): PaymentOrder;
+  getPaymentOrder(id: number): PaymentOrder | undefined;
+  listPaymentOrders(filter?: { partnerId?: string; status?: PaymentOrderStatus; orderId?: string; msgId?: string }): PaymentOrder[];
+  updatePaymentOrderStatus(id: number, status: PaymentOrderStatus): void;
+  listPaymentTransactions(paymentOrderId: number): PaymentTransaction[];
+  getPaymentTransaction(id: number): PaymentTransaction | undefined;
+  updatePaymentTransaction(
+    id: number,
+    patch: Partial<Pick<PaymentTransaction, 'vopStatus' | 'vopCorrectedName' | 'debitBookingId' | 'creditBookingId'>>,
+  ): void;
+  appendPaymentStatusEvent(event: {
+    paymentOrderId: number;
+    status: PaymentStatusCode;
+    reasonCode?: string;
+    additionalInfo?: string[];
+  }): PaymentStatusEvent;
+  listPaymentStatusEvents(filter?: { paymentOrderId?: number; partnerId?: string } & DateFilter): PaymentStatusEvent[];
+
+  markDelivered(partnerId: string, kind: DeliveryKind, itemKeys: string[]): void;
+  listDeliveredKeys(partnerId: string, kind: DeliveryKind): Set<string>;
+  resetDeliveries(filter?: { partnerId?: string; kind?: DeliveryKind }): number;
+}
+
+export type AppStore = EbicsStore & BankingStore & OrderLedgerStore;

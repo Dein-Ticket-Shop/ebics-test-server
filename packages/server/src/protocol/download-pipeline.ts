@@ -11,11 +11,11 @@ export interface PreparedDownload {
 }
 
 export function prepareDownload(
-  orderData: string,
+  orderData: string | Buffer,
   subscriberEncPublicKeyPem: string,
   bankEncCertDer: Buffer,
 ): PreparedDownload {
-  const compressed = deflate(Buffer.from(orderData, 'utf8'));
+  const compressed = deflate(Buffer.isBuffer(orderData) ? orderData : Buffer.from(orderData, 'utf8'));
   const transactionKey = generateTransactionKey();
   const encrypted = aesEncrypt(compressed, transactionKey);
 

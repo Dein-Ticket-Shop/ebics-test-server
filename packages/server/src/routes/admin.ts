@@ -4,6 +4,10 @@ import { SubscriberState } from '../store/types.js';
 import { generateBankKeys } from '../bank/bank-keys.js';
 import { createBankingAdminRoute } from './admin-banking.js';
 import { calculateIban } from '../banking/iban.js';
+import { createPaymentsAdminRoute } from './admin-payments.js';
+import { recordSubscriberActivated } from '../banking/order-events.js';
+import { allowPreActivation, edsHold, hacFormat, vopDefaultStatus } from '../config/feature-flags.js';
+import { isStrictValidation } from '../banking/validation.js';
 
 export function createAdminRoute(store: AppStore, hostId?: string) {
   const app = new Hono();
@@ -96,6 +100,7 @@ export function createAdminRoute(store: AppStore, hostId?: string) {
     });
 
     ensureBankingEntities(store, partnerId, userId);
+    recordSubscriberActivated(store, partnerId, userId);
 
     return c.json({ ...store.getSubscriber(partnerId, userId) });
   });
@@ -218,6 +223,18 @@ export function createAdminRoute(store: AppStore, hostId?: string) {
   });
 
   app.route('/banking', createBankingAdminRoute(store));
+
+  app.get('/config/flags', (c) => {
+    return c.json({
+      hacFormat: hacFormat(),
+      edsHold: edsHold(),
+      vopDefault: vopDefaultStatus(),
+      strictValidation: isStrictValidation(),
+      allowPreActivation: allowPreActivation(),
+    });
+  });
+
+  app.route('/', createPaymentsAdminRoute(store));
 
   app.post('/reset', (c) => {
     store.reset();

@@ -42,6 +42,13 @@ export const SUPPORTED_ORDER_TYPES: OrderTypeInfo[] = [
   // Business downloads (BTD) — handled by handleBtd
   { adminType: 'BTD', service: { serviceName: 'STA', scope: 'DE', msgName: 'camt.053' }, description: 'Bank statement (camt.053)' },
   { adminType: 'BTD', service: { serviceName: 'STA', scope: 'DE', msgName: 'mt940' }, description: 'Bank statement (MT940)' },
+  // SEPA Instant with payment status, notification and Verification of Payee reports
+  { adminType: 'BTU', service: { serviceName: 'SCI', scope: 'DE', serviceOption: 'VOI', msgName: 'pain.001' }, description: 'SEPA Instant Credit Transfer' },
+  { adminType: 'BTD', service: { serviceName: 'EOP', scope: 'DE', msgName: 'camt.053' }, description: 'End of period statement (camt.053)' },
+  { adminType: 'BTD', service: { serviceName: 'STM', scope: 'DE', msgName: 'camt.052' }, description: 'Intraday account report (camt.052)' },
+  { adminType: 'BTD', service: { serviceName: 'STM', scope: 'DE', serviceOption: 'SCI', msgName: 'camt.054' }, description: 'Debit/credit notification (camt.054)' },
+  { adminType: 'BTD', service: { serviceName: 'REP', scope: 'DE', serviceOption: 'SCI', msgName: 'pain.002' }, description: 'Payment status report (pain.002)' },
+  { adminType: 'BTD', service: { serviceName: 'REP', scope: 'DE', serviceOption: 'VOP', msgName: 'pain.002' }, description: 'Verification of Payee report (pain.002)' },
 ];
 
 /** Maps a subscriber lifecycle state to the EBICS UserStatusType integer. */

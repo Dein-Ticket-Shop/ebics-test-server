@@ -11,6 +11,7 @@
     listAccountsForPartner,
     grantAccountAccess,
     revokeAccountAccess,
+    type StatementFormat,
   } from '$lib/api.js';
   import Icon from '$lib/components/Icon.svelte';
   import type { Account, Person, Booking, Subscriber } from '$lib/types.js';
@@ -45,7 +46,7 @@
   let grantPartnerId = $state('');
 
   // Statement
-  let stmtFormat = $state<'camt.053' | 'mt940'>('camt.053');
+  let stmtFormat = $state<StatementFormat>('camt.053');
 
   // Booking detail expand
   let expandedBooking = $state<number | null>(null);
@@ -294,6 +295,8 @@
     <div class="flex items-center gap-3">
       <select class="select select-bordered select-xs" bind:value={stmtFormat}>
         <option value="camt.053">camt.053 (ISO 20022 XML)</option>
+        <option value="camt.052">camt.052 (intraday report)</option>
+        <option value="camt.054">camt.054 (debit/credit notification)</option>
         <option value="mt940">MT940 (SWIFT)</option>
       </select>
       <button class="btn btn-xs btn-outline gap-1.5" onclick={downloadStatement}>

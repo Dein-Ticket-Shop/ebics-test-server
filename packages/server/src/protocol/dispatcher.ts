@@ -24,6 +24,9 @@ import { handleHca as handleHcaKeyMgmt } from '../handlers/hca.js';
 import { handleHcs } from '../handlers/hcs.js';
 import { decryptUpload } from './upload-pipeline.js';
 import { logError } from '../logger.js';
+import { createZip } from './zip.js';
+import type { DownloadOrderData, DownloadPayload } from '../handlers/handler-types.js';
+import { recordUploadCompleted, recordUploadRejected } from '../banking/order-events.js';
 
 export interface DispatcherConfig {
   hostId: string;
@@ -35,7 +38,7 @@ export type DownloadOrderHandler = (
   subscriber: Subscriber,
   hostConfig: HostConfig,
   store: AppStore,
-) => string | null;
+) => DownloadOrderData;
 
 export async function dispatch(ctx: HandlerContext, config: DispatcherConfig): Promise<HandlerResult> {
   const rootElement = getRootElementName(ctx.doc);
@@ -225,8 +228,8 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     return errorResponse(ReturnCode.EBICS_UNSUPPORTED_ORDER_TYPE);
   }
 
-  const orderDataXml = handler(ctx, subscriber, hostConfig, store);
-  if (orderDataXml === null) {
+  const orderData = handler(ctx, subscriber, hostConfig, store);
+  if (orderData === null) {
     return buildEbicsResponse({
       technicalCode: ReturnCode.EBICS_OK,
       businessCode: ReturnCode.EBICS_NO_DOWNLOAD_DATA_AVAILABLE,
@@ -246,7 +249,9 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
       .replace(/\s/g, ''),
   );
 
-  const download = prepareDownload(orderDataXml, subscriberEncPubKey, bankEncCertDer);
+  const containerType = xpathString('//ebics:OrderDetails//ebics:Service/ebics:Container/@containerType', ctx.doc);
+  const packed = packDownload(ctx, orderData, containerType);
+  const download = prepareDownload(packed.data, subscriberEncPubKey, bankEncCertDer);
   const txId = generateTransactionId();
 
   store.createTransaction({
@@ -262,6 +267,8 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     segments: download.segments,
     transactionKey: download.wrappedTransactionKey,
     encKeyDigest: download.encKeyDigest,
+    deliveryKind: packed.deliveryKind,
+    deliveryKeys: packed.deliveryKeys,
   });
 
   if (download.numSegments > 1) {
@@ -312,6 +319,11 @@ function handleTransactionContinuation(
   }
 
   if (phase === 'Receipt') {
+    // A positive receipt (0) confirms the download: its items are not handed out again without DateRange
+    const receiptCode = xpathString('//ebics:TransferReceipt/ebics:ReceiptCode/text()', ctx.doc);
+    if (receiptCode === '0' && tx.deliveryKind && tx.deliveryKeys?.length) {
+      store.markDelivered(tx.partnerId, tx.deliveryKind, tx.deliveryKeys);
+    }
     store.deleteTransaction(transactionId);
 
     return buildEbicsResponse({
@@ -363,6 +375,8 @@ function handleUploadInit(
 
   const serviceName = xpathString('//ebics:BTUOrderParams/ebics:Service/ebics:ServiceName/text()', ctx.doc);
   const msgName = xpathString('//ebics:BTUOrderParams/ebics:Service/ebics:MsgName/text()', ctx.doc);
+  const serviceOption = xpathString('//ebics:BTUOrderParams/ebics:Service/ebics:ServiceOption/text()', ctx.doc);
+  const requestEds = xpathString('//ebics:BTUOrderParams/ebics:SignatureFlag/@requestEDS', ctx.doc) === 'true';
 
   const wrappedKey = xpathString('//ebics:body/ebics:DataTransfer/ebics:DataEncryptionInfo/ebics:TransactionKey/text()', ctx.doc);
   const signatureData = xpathString('//ebics:body/ebics:DataTransfer/ebics:SignatureData/text()', ctx.doc);
@@ -372,6 +386,8 @@ function handleUploadInit(
   }
 
   const txId = generateTransactionId();
+  // Banks allocate an OrderID per upload and echo it in the responses (HAC refers to it)
+  const orderId = store.nextOrderId(partnerId);
 
   store.createTransaction({
     transactionId: txId,
@@ -389,6 +405,9 @@ function handleUploadInit(
     signatureData: signatureData ?? undefined,
     serviceName: serviceName ?? undefined,
     msgName: msgName ?? undefined,
+    orderId,
+    serviceOption: serviceOption ?? undefined,
+    requestEds,
   });
 
   return {
@@ -397,6 +416,7 @@ function handleUploadInit(
       businessCode: ReturnCode.EBICS_OK,
       transactionId: txId,
       transactionPhase: 'Initialisation',
+      orderId,
     }),
     logEntry: {
       orderType,
@@ -464,6 +484,7 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
             tx.msgName,
             sub,
             store,
+            { orderId: tx.orderId, serviceOption: tx.serviceOption, requestEds: tx.requestEds },
           );
           break;
       }
@@ -471,6 +492,15 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
   } catch (err) {
     logError(`upload processing (${tx.orderType})`, err);
     businessCode = ReturnCode.EBICS_PROCESSING_ERROR;
+  }
+
+  if (tx.orderId && (tx.orderType === 'PUB' || tx.orderType === 'HCA' || tx.orderType === 'HCS')) {
+    const orderCtx = { partnerId: tx.partnerId, userId: tx.userId, orderId: tx.orderId, adminOrderType: tx.orderType };
+    if (businessCode === ReturnCode.EBICS_OK) {
+      recordUploadCompleted(store, orderCtx);
+    } else {
+      recordUploadRejected(store, orderCtx, `Return code ${businessCode}`);
+    }
   }
 
   // Keep the record (marked finalized) to acknowledge an optional client Receipt.
@@ -494,6 +524,7 @@ function handleUploadContinuation(
       businessCode,
       transactionId,
       transactionPhase: 'Receipt',
+      orderId: tx.orderId,
     });
   }
 
@@ -520,5 +551,32 @@ function handleUploadContinuation(
     transactionPhase: 'Transfer',
     segmentNumber,
     lastSegment,
+    orderId: tx.orderId,
   });
+}
+
+/**
+ * Turns handler output into order data bytes. With `<Container containerType="ZIP">` the documents
+ * are packed into a ZIP (as clients expect for BTD); without a container a plain
+ * string is sent unchanged and multi-document payloads are joined.
+ */
+function packDownload(
+  ctx: HandlerContext,
+  orderData: string | DownloadPayload,
+  containerType: string | undefined,
+): { data: string | Buffer; deliveryKind?: DownloadPayload['deliveryKind']; deliveryKeys?: string[] } {
+  if (typeof orderData === 'string') {
+    if (containerType !== 'ZIP') return { data: orderData };
+    const msgName = xpathString('//ebics:OrderDetails//ebics:Service/ebics:MsgName/text()', ctx.doc) ?? 'orderdata';
+    const extension = orderData.trimStart().startsWith('<') ? 'xml' : 'txt';
+    return { data: createZip([{ name: `${msgName}.${extension}`, content: orderData }]) };
+  }
+
+  return {
+    data: containerType === 'ZIP'
+      ? createZip(orderData.documents)
+      : orderData.documents.map((d) => d.content).join('\n'),
+    deliveryKind: orderData.deliveryKind,
+    deliveryKeys: orderData.deliveryKeys,
+  };
 }

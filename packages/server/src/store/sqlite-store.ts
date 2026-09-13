@@ -3,6 +3,20 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EbicsStore, Subscriber, SubscriberKeys, HostConfig, BankKeys, ActivityLogEntry, ProtocolLogEntry, Transaction, TransactionPhase, DownloadData, BankingStore, BankConfig, Person, Account, Booking, AppStore, UploadedOrder } from './types.js';
+import type {
+  DateFilter,
+  DeliveryKind,
+  HacEvent,
+  NewHacEvent,
+  NewPaymentOrder,
+  NewPaymentTransaction,
+  PaymentOrder,
+  PaymentOrderStatus,
+  PaymentStatusCode,
+  PaymentStatusEvent,
+  PaymentTransaction,
+  VopStatus,
+} from './types.js';
 import { SubscriberState } from './types.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -17,6 +31,24 @@ export class SqliteStore implements AppStore {
 
     const schema = readFileSync(resolve(__dirname, 'schema.sql'), 'utf8');
     this.db.exec(schema);
+    this.migrate();
+  }
+
+  /** Adds columns introduced after the first release to databases created by an older schema.sql */
+  private migrate(): void {
+    this.ensureColumn('transactions', 'order_id', 'TEXT');
+    this.ensureColumn('transactions', 'service_option', 'TEXT');
+    this.ensureColumn('transactions', 'request_eds', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('transactions', 'delivery_kind', 'TEXT');
+    this.ensureColumn('transactions', 'delivery_keys', 'TEXT');
+    this.ensureColumn('uploaded_orders', 'order_id', 'TEXT');
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!columns.some((c) => c.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   getHostConfig(): HostConfig | undefined {
@@ -196,13 +228,15 @@ export class SqliteStore implements AppStore {
     const expires = new Date(Date.now() + 3600_000).toISOString().replace('T', ' ').replace('Z', '');
 
     this.db.prepare(`
-      INSERT INTO transactions (transaction_id, partner_id, user_id, host_id, direction, phase, order_type, num_segments, current_segment, segments, transaction_key, enc_key_digest, signature_data, service_name, msg_name, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO transactions (transaction_id, partner_id, user_id, host_id, direction, phase, order_type, num_segments, current_segment, segments, transaction_key, enc_key_digest, signature_data, service_name, msg_name, order_id, service_option, request_eds, delivery_kind, delivery_keys, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       tx.transactionId, tx.partnerId, tx.userId, tx.hostId,
       tx.direction, tx.phase, tx.orderType, tx.numSegments, tx.currentSegment,
       JSON.stringify(tx.segments), tx.transactionKey, tx.encKeyDigest,
       tx.signatureData ?? null, tx.serviceName ?? null, tx.msgName ?? null,
+      tx.orderId ?? null, tx.serviceOption ?? null, tx.requestEds ? 1 : 0,
+      tx.deliveryKind ?? null, tx.deliveryKeys ? JSON.stringify(tx.deliveryKeys) : null,
       now, expires,
     );
 
@@ -276,11 +310,11 @@ export class SqliteStore implements AppStore {
     }));
   }
 
-  createUploadedOrder(data: Omit<UploadedOrder, 'id' | 'processed' | 'createdAt'>): UploadedOrder {
+  createUploadedOrder(data: Omit<UploadedOrder, 'id' | 'processed' | 'createdAt' | 'orderId'> & { orderId?: string }): UploadedOrder {
     const result = this.db.prepare(`
-      INSERT INTO uploaded_orders (partner_id, user_id, service_name, msg_name, raw_content)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(data.partnerId, data.userId, data.serviceName, data.msgName ?? null, data.rawContent);
+      INSERT INTO uploaded_orders (partner_id, user_id, service_name, msg_name, raw_content, order_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(data.partnerId, data.userId, data.serviceName, data.msgName ?? null, data.rawContent, data.orderId ?? null);
     return this.getUploadedOrder(Number(result.lastInsertRowid))!;
   }
 
@@ -308,11 +342,18 @@ export class SqliteStore implements AppStore {
       msgName: (row['msg_name'] as string) ?? undefined,
       rawContent: row['raw_content'] as string,
       processed: (row['processed'] as number) === 1,
+      orderId: (row['order_id'] as string) ?? undefined,
       createdAt: row['created_at'] as string,
     };
   }
 
   reset(): void {
+    this.db.exec('DELETE FROM payment_status_events');
+    this.db.exec('DELETE FROM payment_transactions');
+    this.db.exec('DELETE FROM payment_orders');
+    this.db.exec('DELETE FROM hac_events');
+    this.db.exec('DELETE FROM deliveries');
+    this.db.exec('DELETE FROM order_id_counters');
     this.db.exec('DELETE FROM protocol_log');
     this.db.exec('DELETE FROM activity_log');
     this.db.exec('DELETE FROM nonces');
@@ -559,6 +600,11 @@ export class SqliteStore implements AppStore {
       signatureData: (row['signature_data'] as string) ?? undefined,
       serviceName: (row['service_name'] as string) ?? undefined,
       msgName: (row['msg_name'] as string) ?? undefined,
+      orderId: (row['order_id'] as string) ?? undefined,
+      serviceOption: (row['service_option'] as string) ?? undefined,
+      requestEds: row['request_eds'] === 1,
+      deliveryKind: (row['delivery_kind'] as DeliveryKind) ?? undefined,
+      deliveryKeys: row['delivery_keys'] ? JSON.parse(row['delivery_keys'] as string) : undefined,
       createdAt: row['created_at'] as string,
       expiresAt: row['expires_at'] as string,
     };
@@ -608,6 +654,257 @@ export class SqliteStore implements AppStore {
     };
   }
 
+  // Order IDs
+
+  nextOrderId(partnerId: string): string {
+    return this.db.transaction(() => {
+      this.db.prepare('INSERT INTO order_id_counters (partner_id, next) VALUES (?, 0) ON CONFLICT(partner_id) DO NOTHING').run(partnerId);
+      const row = this.db.prepare('SELECT next FROM order_id_counters WHERE partner_id = ?').get(partnerId) as { next: number };
+      this.db.prepare('UPDATE order_id_counters SET next = next + 1 WHERE partner_id = ?').run(partnerId);
+      return formatOrderId(row.next);
+    })();
+  }
+
+  // HAC event ledger
+
+  appendHacEvent(event: NewHacEvent): HacEvent {
+    return this.db.transaction(() => {
+      // Strictly increasing per partner: clients use the TimeStamp attribute as idempotency key
+      const last = this.db.prepare('SELECT MAX(event_at) AS last FROM hac_events WHERE partner_id = ?').get(event.partnerId) as { last: string | null };
+      let eventAt = event.eventAt ?? new Date().toISOString();
+      if (last.last && eventAt <= last.last) {
+        eventAt = new Date(new Date(last.last).getTime() + 1).toISOString();
+      }
+      const result = this.db.prepare(`
+        INSERT INTO hac_events (partner_id, user_id, order_id, action, admin_order_type, service_name, service_option, scope,
+          container_type, msg_name, order_id_ref, admin_order_type_ref, reason_code, additional_info, event_at, uploaded_order_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        event.partnerId, event.userId ?? null, event.orderId, event.action, event.adminOrderType,
+        event.serviceName ?? null, event.serviceOption ?? null, event.scope ?? null, event.containerType ?? null,
+        event.msgName ?? null, event.orderIdRef ?? null, event.adminOrderTypeRef ?? null, event.reasonCode ?? null,
+        JSON.stringify(event.additionalInfo ?? []), eventAt, event.uploadedOrderId ?? null,
+      );
+      return this.getHacEvent(Number(result.lastInsertRowid))!;
+    })();
+  }
+
+  getHacEvent(id: number): HacEvent | undefined {
+    const row = this.db.prepare('SELECT * FROM hac_events WHERE id = ?').get(id) as Row | undefined;
+    return row ? this.rowToHacEvent(row) : undefined;
+  }
+
+  listHacEvents(filter: { partnerId?: string; orderId?: string } & DateFilter = {}): HacEvent[] {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (filter.partnerId) { where.push('partner_id = ?'); params.push(filter.partnerId); }
+    if (filter.orderId) { where.push('(order_id = ? OR order_id_ref = ?)'); params.push(filter.orderId, filter.orderId); }
+    if (filter.from) { where.push('substr(event_at, 1, 10) >= ?'); params.push(filter.from); }
+    if (filter.to) { where.push('substr(event_at, 1, 10) <= ?'); params.push(filter.to); }
+    const sql = `SELECT * FROM hac_events${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY event_at, id`;
+    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => this.rowToHacEvent(r));
+  }
+
+  private rowToHacEvent(row: Row): HacEvent {
+    return {
+      id: row['id'] as number,
+      partnerId: row['partner_id'] as string,
+      userId: (row['user_id'] as string) ?? undefined,
+      orderId: row['order_id'] as string,
+      action: row['action'] as string,
+      adminOrderType: row['admin_order_type'] as string,
+      serviceName: (row['service_name'] as string) ?? undefined,
+      serviceOption: (row['service_option'] as string) ?? undefined,
+      scope: (row['scope'] as string) ?? undefined,
+      containerType: (row['container_type'] as string) ?? undefined,
+      msgName: (row['msg_name'] as string) ?? undefined,
+      orderIdRef: (row['order_id_ref'] as string) ?? undefined,
+      adminOrderTypeRef: (row['admin_order_type_ref'] as string) ?? undefined,
+      reasonCode: (row['reason_code'] as string) ?? undefined,
+      additionalInfo: JSON.parse((row['additional_info'] as string) ?? '[]'),
+      eventAt: row['event_at'] as string,
+      uploadedOrderId: (row['uploaded_order_id'] as number) ?? undefined,
+    };
+  }
+
+  // Credit transfer orders
+
+  createPaymentOrder(order: NewPaymentOrder, transactions: NewPaymentTransaction[]): PaymentOrder {
+    return this.db.transaction(() => {
+      const result = this.db.prepare(`
+        INSERT INTO payment_orders (order_id, uploaded_order_id, partner_id, user_id, service_name, service_option, msg_name,
+          msg_id, pmt_inf_id, debtor_name, debtor_iban, requested_eds, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        order.orderId, order.uploadedOrderId ?? null, order.partnerId, order.userId, order.serviceName,
+        order.serviceOption ?? null, order.msgName, order.msgId, order.pmtInfId, order.debtorName ?? null,
+        order.debtorIban ?? null, order.requestedEds ? 1 : 0, order.status,
+      );
+      const id = Number(result.lastInsertRowid);
+      const insertTx = this.db.prepare(`
+        INSERT INTO payment_transactions (payment_order_id, end_to_end_id, creditor_name, creditor_iban, creditor_bic,
+          amount_cents, currency, remittance_info, vop_status, vop_corrected_name, debit_booking_id, credit_booking_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const tx of transactions) {
+        insertTx.run(
+          id, tx.endToEndId ?? null, tx.creditorName ?? null, tx.creditorIban ?? null, tx.creditorBic ?? null,
+          tx.amountCents, tx.currency, tx.remittanceInfo ?? null, tx.vopStatus, tx.vopCorrectedName ?? null,
+          tx.debitBookingId ?? null, tx.creditBookingId ?? null,
+        );
+      }
+      return this.getPaymentOrder(id)!;
+    })();
+  }
+
+  getPaymentOrder(id: number): PaymentOrder | undefined {
+    const row = this.db.prepare('SELECT * FROM payment_orders WHERE id = ?').get(id) as Row | undefined;
+    return row ? this.rowToPaymentOrder(row) : undefined;
+  }
+
+  listPaymentOrders(filter: { partnerId?: string; status?: PaymentOrderStatus; orderId?: string; msgId?: string } = {}): PaymentOrder[] {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (filter.partnerId) { where.push('partner_id = ?'); params.push(filter.partnerId); }
+    if (filter.status) { where.push('status = ?'); params.push(filter.status); }
+    if (filter.orderId) { where.push('order_id = ?'); params.push(filter.orderId); }
+    if (filter.msgId) { where.push('msg_id = ?'); params.push(filter.msgId); }
+    const sql = `SELECT * FROM payment_orders${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC`;
+    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => this.rowToPaymentOrder(r));
+  }
+
+  updatePaymentOrderStatus(id: number, status: PaymentOrderStatus): void {
+    this.db.prepare(`UPDATE payment_orders SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`).run(status, id);
+  }
+
+  listPaymentTransactions(paymentOrderId: number): PaymentTransaction[] {
+    const rows = this.db.prepare('SELECT * FROM payment_transactions WHERE payment_order_id = ? ORDER BY id').all(paymentOrderId) as Row[];
+    return rows.map((r) => this.rowToPaymentTransaction(r));
+  }
+
+  getPaymentTransaction(id: number): PaymentTransaction | undefined {
+    const row = this.db.prepare('SELECT * FROM payment_transactions WHERE id = ?').get(id) as Row | undefined;
+    return row ? this.rowToPaymentTransaction(row) : undefined;
+  }
+
+  updatePaymentTransaction(
+    id: number,
+    patch: Partial<Pick<PaymentTransaction, 'vopStatus' | 'vopCorrectedName' | 'debitBookingId' | 'creditBookingId'>>,
+  ): void {
+    const columns: Record<string, string> = {
+      vopStatus: 'vop_status',
+      vopCorrectedName: 'vop_corrected_name',
+      debitBookingId: 'debit_booking_id',
+      creditBookingId: 'credit_booking_id',
+    };
+    const sets: string[] = [];
+    const values: (string | number | null)[] = [];
+    for (const [key, column] of Object.entries(columns)) {
+      if (key in patch) {
+        sets.push(`${column} = ?`);
+        values.push((patch as Record<string, string | number | undefined>)[key] ?? null);
+      }
+    }
+    if (sets.length === 0) return;
+    this.db.prepare(`UPDATE payment_transactions SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+  }
+
+  appendPaymentStatusEvent(event: {
+    paymentOrderId: number;
+    status: PaymentStatusCode;
+    reasonCode?: string;
+    additionalInfo?: string[];
+  }): PaymentStatusEvent {
+    const result = this.db.prepare(`
+      INSERT INTO payment_status_events (payment_order_id, status, reason_code, additional_info) VALUES (?, ?, ?, ?)
+    `).run(event.paymentOrderId, event.status, event.reasonCode ?? null, JSON.stringify(event.additionalInfo ?? []));
+    const row = this.db.prepare('SELECT * FROM payment_status_events WHERE id = ?').get(Number(result.lastInsertRowid)) as Row;
+    return this.rowToPaymentStatusEvent(row);
+  }
+
+  listPaymentStatusEvents(filter: { paymentOrderId?: number; partnerId?: string } & DateFilter = {}): PaymentStatusEvent[] {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (filter.paymentOrderId !== undefined) { where.push('e.payment_order_id = ?'); params.push(filter.paymentOrderId); }
+    if (filter.partnerId) { where.push('o.partner_id = ?'); params.push(filter.partnerId); }
+    if (filter.from) { where.push('substr(e.created_at, 1, 10) >= ?'); params.push(filter.from); }
+    if (filter.to) { where.push('substr(e.created_at, 1, 10) <= ?'); params.push(filter.to); }
+    const sql = `SELECT e.* FROM payment_status_events e JOIN payment_orders o ON o.id = e.payment_order_id${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY e.id`;
+    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => this.rowToPaymentStatusEvent(r));
+  }
+
+  private rowToPaymentOrder(row: Row): PaymentOrder {
+    return {
+      id: row['id'] as number,
+      orderId: row['order_id'] as string,
+      uploadedOrderId: (row['uploaded_order_id'] as number) ?? undefined,
+      partnerId: row['partner_id'] as string,
+      userId: row['user_id'] as string,
+      serviceName: row['service_name'] as string,
+      serviceOption: (row['service_option'] as string) ?? undefined,
+      msgName: row['msg_name'] as string,
+      msgId: row['msg_id'] as string,
+      pmtInfId: row['pmt_inf_id'] as string,
+      debtorName: (row['debtor_name'] as string) ?? undefined,
+      debtorIban: (row['debtor_iban'] as string) ?? undefined,
+      requestedEds: row['requested_eds'] === 1,
+      status: row['status'] as PaymentOrderStatus,
+      createdAt: row['created_at'] as string,
+      updatedAt: row['updated_at'] as string,
+    };
+  }
+
+  private rowToPaymentTransaction(row: Row): PaymentTransaction {
+    return {
+      id: row['id'] as number,
+      paymentOrderId: row['payment_order_id'] as number,
+      endToEndId: (row['end_to_end_id'] as string) ?? undefined,
+      creditorName: (row['creditor_name'] as string) ?? undefined,
+      creditorIban: (row['creditor_iban'] as string) ?? undefined,
+      creditorBic: (row['creditor_bic'] as string) ?? undefined,
+      amountCents: row['amount_cents'] as number,
+      currency: row['currency'] as string,
+      remittanceInfo: (row['remittance_info'] as string) ?? undefined,
+      vopStatus: row['vop_status'] as VopStatus,
+      vopCorrectedName: (row['vop_corrected_name'] as string) ?? undefined,
+      debitBookingId: (row['debit_booking_id'] as number) ?? undefined,
+      creditBookingId: (row['credit_booking_id'] as number) ?? undefined,
+    };
+  }
+
+  private rowToPaymentStatusEvent(row: Row): PaymentStatusEvent {
+    return {
+      id: row['id'] as number,
+      paymentOrderId: row['payment_order_id'] as number,
+      status: row['status'] as PaymentStatusCode,
+      reasonCode: (row['reason_code'] as string) ?? undefined,
+      additionalInfo: JSON.parse((row['additional_info'] as string) ?? '[]'),
+      createdAt: row['created_at'] as string,
+    };
+  }
+
+  // Download deliveries
+
+  markDelivered(partnerId: string, kind: DeliveryKind, itemKeys: string[]): void {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO deliveries (partner_id, kind, item_key) VALUES (?, ?, ?)');
+    this.db.transaction(() => {
+      for (const key of itemKeys) insert.run(partnerId, kind, key);
+    })();
+  }
+
+  listDeliveredKeys(partnerId: string, kind: DeliveryKind): Set<string> {
+    const rows = this.db.prepare('SELECT item_key FROM deliveries WHERE partner_id = ? AND kind = ?').all(partnerId, kind) as { item_key: string }[];
+    return new Set(rows.map((r) => r.item_key));
+  }
+
+  resetDeliveries(filter: { partnerId?: string; kind?: DeliveryKind } = {}): number {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (filter.partnerId) { where.push('partner_id = ?'); params.push(filter.partnerId); }
+    if (filter.kind) { where.push('kind = ?'); params.push(filter.kind); }
+    return this.db.prepare(`DELETE FROM deliveries${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`).run(...params).changes;
+  }
+
   private rowToSubscriber(row: Record<string, string | null>): Subscriber {
     return {
       partnerId: row['partner_id']!,
@@ -625,4 +922,12 @@ export class SqliteStore implements AppStore {
       updatedAt: row['updated_at']!,
     };
   }
+}
+
+type Row = Record<string, string | number | null>;
+
+/** OrderIDType is [A-Z][A-Z0-9]{3}: A000…A999, B000…, wrapping after Z999 */
+export function formatOrderId(sequence: number): string {
+  const letter = String.fromCharCode(65 + (Math.floor(sequence / 1000) % 26));
+  return `${letter}${String(sequence % 1000).padStart(3, '0')}`;
 }

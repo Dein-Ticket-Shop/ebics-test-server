@@ -247,7 +247,8 @@ export function buildEbicsDownloadInitRequest(
   keys: TestClientKeys,
   bankCerts: BankCerts,
   orderType: string,
-  btdParams?: { serviceName: string; msgName: string },
+  btdParams?: DownloadParams,
+  standardParams?: { dateRange?: DateRange },
 ): string {
   const nonce = generateNonce();
   const timestamp = new Date().toISOString();
@@ -256,7 +257,13 @@ export function buildEbicsDownloadInitRequest(
 
   let orderParams: string;
   if (orderType === 'BTD' && btdParams) {
-    orderParams = `<BTDOrderParams xmlns="urn:org:ebics:H005"><Service><ServiceName>${btdParams.serviceName}</ServiceName><MsgName>${btdParams.msgName}</MsgName></Service></BTDOrderParams>`;
+    // RestrictedServiceType order: ServiceName, Scope, ServiceOption, Container, MsgName; then DateRange
+    const scope = btdParams.scope ? `<Scope>${btdParams.scope}</Scope>` : '';
+    const option = btdParams.serviceOption ? `<ServiceOption>${btdParams.serviceOption}</ServiceOption>` : '';
+    const container = btdParams.containerType ? `<Container containerType="${btdParams.containerType}"/>` : '';
+    orderParams = `<BTDOrderParams xmlns="urn:org:ebics:H005"><Service><ServiceName>${btdParams.serviceName}</ServiceName>${scope}${option}${container}<MsgName>${btdParams.msgName}</MsgName></Service>${dateRangeXml(btdParams.dateRange)}</BTDOrderParams>`;
+  } else if (standardParams?.dateRange) {
+    orderParams = `<StandardOrderParams xmlns="urn:org:ebics:H005">${dateRangeXml(standardParams.dateRange)}</StandardOrderParams>`;
   } else {
     orderParams = `<StandardOrderParams xmlns="urn:org:ebics:H005"/>`;
   }
@@ -375,13 +382,14 @@ export function buildEbicsUploadInitRequest(
   serviceName: string,
   msgName: string,
   enc: EncryptedUpload,
+  options: UploadOptions = {},
 ): string {
   const nonce = generateNonce();
   const timestamp = new Date().toISOString();
   const authDigest = computeCertDigest(bankCerts.authCertPem);
   const encDigest = computeCertDigest(bankCerts.encCertPem);
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>BTU</AdminOrderType><BTUOrderParams xmlns="urn:org:ebics:H005"><Service><ServiceName>${serviceName}</ServiceName><MsgName>${msgName}</MsgName></Service></BTUOrderParams></OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0000</SecurityMedium><NumSegments>${enc.numSegments}</NumSegments></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body><DataTransfer><DataEncryptionInfo authenticate="true"><EncryptionPubKeyDigest Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</EncryptionPubKeyDigest><TransactionKey>${enc.wrappedKey}</TransactionKey></DataEncryptionInfo><SignatureData authenticate="true">${enc.signatureDataB64}</SignatureData><DataDigest SignatureVersion="A006">${enc.dataDigest}</DataDigest></DataTransfer></body></ebicsRequest>`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>BTU</AdminOrderType><BTUOrderParams xmlns="urn:org:ebics:H005"><Service><ServiceName>${serviceName}</ServiceName>${options.scope ? `<Scope>${options.scope}</Scope>` : ''}${options.serviceOption ? `<ServiceOption>${options.serviceOption}</ServiceOption>` : ''}<MsgName>${msgName}</MsgName></Service>${options.requestEds ? '<SignatureFlag requestEDS="true"/>' : ''}</BTUOrderParams></OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0000</SecurityMedium><NumSegments>${enc.numSegments}</NumSegments></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body><DataTransfer><DataEncryptionInfo authenticate="true"><EncryptionPubKeyDigest Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</EncryptionPubKeyDigest><TransactionKey>${enc.wrappedKey}</TransactionKey></DataEncryptionInfo><SignatureData authenticate="true">${enc.signatureDataB64}</SignatureData><DataDigest SignatureVersion="A006">${enc.dataDigest}</DataDigest></DataTransfer></body></ebicsRequest>`;
 
   return signEbicsRequest(xml, keys.authKeyPair.privateKey);
 }
@@ -416,4 +424,127 @@ export function buildEbicsKeyMgmtUploadInitRequest(
   const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>${orderType}</AdminOrderType><StandardOrderParams xmlns="urn:org:ebics:H005"/></OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0000</SecurityMedium><NumSegments>${enc.numSegments}</NumSegments></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body><DataTransfer><DataEncryptionInfo authenticate="true"><EncryptionPubKeyDigest Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</EncryptionPubKeyDigest><TransactionKey>${enc.wrappedKey}</TransactionKey></DataEncryptionInfo><SignatureData authenticate="true">${enc.signatureDataB64}</SignatureData><DataDigest SignatureVersion="A006">${enc.dataDigest}</DataDigest></DataTransfer></body></ebicsRequest>`;
 
   return signEbicsRequest(xml, keys.authKeyPair.privateKey);
+}
+
+// Reports, containers and payment helpers
+
+export interface DateRange {
+  start: string;
+  end: string;
+}
+
+export interface DownloadParams {
+  serviceName: string;
+  msgName: string;
+  scope?: string;
+  serviceOption?: string;
+  containerType?: string;
+  dateRange?: DateRange;
+}
+
+export interface UploadOptions {
+  scope?: string;
+  serviceOption?: string;
+  /** BTUOrderParams/SignatureFlag/@requestEDS */
+  requestEds?: boolean;
+}
+
+function dateRangeXml(range?: DateRange): string {
+  return range ? `<DateRange><Start>${range.start}</Start><End>${range.end}</End></DateRange>` : '';
+}
+
+/** Like decryptDownloadResponse, but returns the raw order data bytes (e.g. a ZIP container) */
+export function decryptDownloadResponseBytes(
+  responseXml: string,
+  encPrivateKeyPem: string,
+): { data: Buffer; transactionId: string; numSegments: number } {
+  const doc = parseXml(responseXml);
+  const transactionId = xpathString('//ebics:TransactionID/text()', doc) ?? '';
+  const numSegmentsStr = xpathString('//ebics:NumSegments/text()', doc);
+  const transactionKeyB64 = xpathString('//ebics:TransactionKey/text()', doc);
+  const orderDataB64 = xpathString('//ebics:OrderData/text()', doc);
+  if (!transactionKeyB64 || !orderDataB64) {
+    throw new Error('Missing TransactionKey or OrderData in response');
+  }
+
+  const transactionKey = privateDecrypt(
+    { key: encPrivateKeyPem, padding: constants.RSA_PKCS1_PADDING },
+    Buffer.from(transactionKeyB64, 'base64'),
+  );
+  const decipher = createDecipheriv('aes-128-cbc', transactionKey, Buffer.alloc(16, 0));
+  decipher.setAutoPadding(false);
+  const decrypted = Buffer.concat([decipher.update(Buffer.from(orderDataB64, 'base64')), decipher.final()]);
+
+  return {
+    data: inflateSync(decrypted),
+    transactionId,
+    numSegments: numSegmentsStr ? parseInt(numSegmentsStr, 10) : 1,
+  };
+}
+
+/** OrderID from an EBICS or key management response header, if any */
+export function readOrderId(responseXml: string): string | undefined {
+  return xpathString('//ebics:header/ebics:mutable/ebics:OrderID/text()', parseXml(responseXml));
+}
+
+/** Business return code (body/ReturnCode) of an EBICS response */
+export function readBusinessReturnCode(responseXml: string): string | undefined {
+  return xpathString('//ebics:body/ebics:ReturnCode/text()', parseXml(responseXml));
+}
+
+export interface Pain001Transaction {
+  endToEndId: string;
+  creditorName: string;
+  creditorIban: string;
+  /** decimal, e.g. "12.34" */
+  amount: string;
+  remittance?: string;
+}
+
+export interface Pain001Payment {
+  pmtInfId: string;
+  debtorName: string;
+  debtorIban: string;
+  transactions: Pain001Transaction[];
+}
+
+/** pain.001.001.09 credit transfer (SEPA Instant unless `instant: false`), one PmtInf per payment */
+export function buildPain001Document(options: { msgId: string; payments: Pain001Payment[]; instant?: boolean }): string {
+  const instant = options.instant ?? true;
+  const allTx = options.payments.flatMap((p) => p.transactions);
+  const sum = (txs: Pain001Transaction[]) => txs.reduce((total, tx) => total + parseFloat(tx.amount), 0).toFixed(2);
+
+  const pmtInfs = options.payments
+    .map(
+      (payment) => `<PmtInf>
+      <PmtInfId>${payment.pmtInfId}</PmtInfId><PmtMtd>TRF</PmtMtd><BtchBookg>false</BtchBookg>
+      <NbOfTxs>${payment.transactions.length}</NbOfTxs><CtrlSum>${sum(payment.transactions)}</CtrlSum>
+      <PmtTpInf><SvcLvl><Cd>SEPA</Cd></SvcLvl>${instant ? '<LclInstrm><Cd>INST</Cd></LclInstrm>' : ''}</PmtTpInf>
+      <ReqdExctnDt><Dt>${new Date().toISOString().slice(0, 10)}</Dt></ReqdExctnDt>
+      <Dbtr><Nm>${payment.debtorName}</Nm></Dbtr>
+      <DbtrAcct><Id><IBAN>${payment.debtorIban}</IBAN></Id></DbtrAcct>
+      <DbtrAgt><FinInstnId><BICFI>ETBADE2AXXX</BICFI></FinInstnId></DbtrAgt>
+      <ChrgBr>SLEV</ChrgBr>
+      ${payment.transactions
+        .map(
+          (tx) => `<CdtTrfTxInf>
+        <PmtId><EndToEndId>${tx.endToEndId}</EndToEndId></PmtId>
+        <Amt><InstdAmt Ccy="EUR">${tx.amount}</InstdAmt></Amt>
+        <Cdtr><Nm>${tx.creditorName}</Nm></Cdtr>
+        <CdtrAcct><Id><IBAN>${tx.creditorIban}</IBAN></Id></CdtrAcct>
+        ${tx.remittance ? `<RmtInf><Ustrd>${tx.remittance}</Ustrd></RmtInf>` : ''}
+      </CdtTrfTxInf>`,
+        )
+        .join('')}
+    </PmtInf>`,
+    )
+    .join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.09">
+  <CstmrCdtTrfInitn>
+    <GrpHdr><MsgId>${options.msgId}</MsgId><CreDtTm>${new Date().toISOString().slice(0, 19)}</CreDtTm><NbOfTxs>${allTx.length}</NbOfTxs><CtrlSum>${sum(allTx)}</CtrlSum><InitgPty><Nm>Test</Nm></InitgPty></GrpHdr>
+    ${pmtInfs}
+  </CstmrCdtTrfInitn>
+</Document>`;
 }

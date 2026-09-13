@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { SubscriberState, BankConfig, Person, Account } from '$lib/types.js';
+  import type { SubscriberState, BankConfig, Person, Account, PaymentOrder } from '$lib/types.js';
   import { base } from '$app/paths';
 
   interface Props {
@@ -18,6 +18,7 @@
       bankConfig: BankConfig | null;
       persons: Person[];
       accounts: Account[];
+      pendingPayments: PaymentOrder[];
     };
   }
 
@@ -49,7 +50,7 @@
 
 <h1 class="text-2xl font-bold mb-6">Dashboard</h1>
 
-<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
   <a href="{base}/host" class="block bg-base-200 rounded-xl p-4 transition-colors hover:bg-base-300 focus-visible:outline-2 focus-visible:outline-primary">
     <div class="text-xs text-base-content/50 mb-1">Host ID</div>
     <div class="text-lg font-bold font-mono">{data.host?.hostId ?? 'Not configured'}</div>
@@ -66,6 +67,12 @@
     <div class="text-xs text-base-content/50 mb-1">Pending Activation</div>
     <div class="text-2xl font-bold text-info">{data.stats.byState.INITIALIZED}</div>
     <div class="text-xs text-base-content/40 mt-0.5">Awaiting bank operator approval</div>
+  </a>
+
+  <a href="{base}/payments?status=PENDING_EDS" class="block bg-base-200 rounded-xl p-4 transition-colors hover:bg-base-300 focus-visible:outline-2 focus-visible:outline-primary">
+    <div class="text-xs text-base-content/50 mb-1">Payments Awaiting EDS</div>
+    <div class="text-2xl font-bold {data.pendingPayments.length > 0 ? 'text-warning' : ''}">{data.pendingPayments.length}</div>
+    <div class="text-xs text-base-content/40 mt-0.5">Held in the VEU for release</div>
   </a>
 </div>
 

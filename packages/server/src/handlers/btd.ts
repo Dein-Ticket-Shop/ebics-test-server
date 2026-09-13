@@ -1,17 +1,21 @@
-import type { HandlerContext } from './handler-types.js';
-import type { Subscriber, HostConfig, AppStore } from '../store/types.js';
+import type { HandlerContext, DownloadOrderData } from './handler-types.js';
+import type { Subscriber, HostConfig, AppStore, DateFilter, PaymentOrder } from '../store/types.js';
 import { xpathString } from '../protocol/xml-parser.js';
 import { generateCamt053Multi, type StatementInput } from '../banking/generators/camt053.js';
 import { generateMt940 } from '../banking/generators/mt940.js';
+import { generateCamt052 } from '../banking/generators/camt052.js';
+import { generateCamt054 } from '../banking/generators/camt054.js';
+import { generatePaymentStatusReport, generateVopReport } from '../banking/generators/pain002.js';
 
 export function handleBtd(
   ctx: HandlerContext,
   subscriber: Subscriber,
   _hostConfig: HostConfig,
   store: AppStore,
-): string | null {
+): DownloadOrderData {
   const serviceName = xpathString('//ebics:BTDOrderParams/ebics:Service/ebics:ServiceName/text()', ctx.doc);
   const msgName = xpathString('//ebics:BTDOrderParams/ebics:Service/ebics:MsgName/text()', ctx.doc);
+  const serviceOption = xpathString('//ebics:BTDOrderParams/ebics:Service/ebics:ServiceOption/text()', ctx.doc);
 
   if (!serviceName) {
     return null;
@@ -26,7 +30,150 @@ export function handleBtd(
   const dynamic = tryDynamicGeneration(store, subscriber, serviceName, msgName ?? undefined, ctx);
   if (dynamic !== undefined) return dynamic;
 
+  const report = tryReportGeneration(store, subscriber, serviceName, serviceOption, msgName, ctx);
+  if (report !== undefined) return report;
+
   return null;
+}
+
+function readDateRange(ctx: HandlerContext): DateFilter {
+  return {
+    from: xpathString('//ebics:BTDOrderParams/ebics:DateRange/ebics:Start/text()', ctx.doc),
+    to: xpathString('//ebics:BTDOrderParams/ebics:DateRange/ebics:End/text()', ctx.doc),
+  };
+}
+
+/**
+ * Reports generated from bookings and payment orders:
+ * - STM camt.052: intraday account report (DateRange, default today)
+ * - STM camt.054: debit/credit notifications
+ * - REP pain.002: payment status reports; with ServiceOption VOP the Verification of Payee reports
+ *
+ * Without a DateRange, notifications and reports hand out each item once (marked delivered on a
+ * positive receipt), like a bank delivering "new" data. With a DateRange everything in range is returned.
+ */
+function tryReportGeneration(
+  store: AppStore,
+  subscriber: Subscriber,
+  serviceName: string,
+  serviceOption: string | undefined,
+  msgName: string | undefined,
+  ctx: HandlerContext,
+): DownloadOrderData | undefined {
+  if (serviceName === 'STM' && msgName === 'camt.052') return intradayReport(store, subscriber, readDateRange(ctx));
+  if (serviceName === 'STM' && msgName === 'camt.054') return notifications(store, subscriber, readDateRange(ctx));
+  if (serviceName === 'REP' && msgName === 'pain.002') {
+    return serviceOption === 'VOP'
+      ? vopReports(store, subscriber, readDateRange(ctx))
+      : paymentStatusReports(store, subscriber, readDateRange(ctx));
+  }
+  return undefined;
+}
+
+function hasRange(range: DateFilter): boolean {
+  return Boolean(range.from || range.to);
+}
+
+function intradayReport(store: AppStore, subscriber: Subscriber, range: DateFilter): DownloadOrderData {
+  const bankConfig = store.getBankConfig();
+  if (!bankConfig) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const fromDate = range.from ?? today;
+  const toDate = range.to ?? today;
+
+  const reports: StatementInput[] = [];
+  for (const account of store.listAccountsForPartner(subscriber.partnerId)) {
+    const person = store.getPerson(account.personId);
+    if (!person) continue;
+    reports.push({
+      account,
+      person,
+      bankConfig,
+      bookings: store.listBookingsForAccount(account.id, fromDate, toDate),
+      openingBalanceCents: store.getOpeningBalanceCents(account.id, fromDate),
+    });
+  }
+  if (reports.every((r) => r.bookings.length === 0)) return null;
+
+  return { documents: [{ name: 'camt.052.xml', content: generateCamt052(reports, fromDate, toDate) }] };
+}
+
+function notifications(store: AppStore, subscriber: Subscriber, range: DateFilter): DownloadOrderData {
+  const bankConfig = store.getBankConfig();
+  if (!bankConfig) return null;
+  const ranged = hasRange(range);
+  const delivered = ranged ? new Set<string>() : store.listDeliveredKeys(subscriber.partnerId, 'camt.054');
+
+  const inputs = [];
+  const keys: string[] = [];
+  for (const account of store.listAccountsForPartner(subscriber.partnerId)) {
+    const person = store.getPerson(account.personId);
+    if (!person) continue;
+    const bookings = store
+      .listBookingsForAccount(account.id, range.from, range.to)
+      .filter((b) => !delivered.has(`booking:${b.id}`));
+    if (bookings.length === 0) continue;
+    keys.push(...bookings.map((b) => `booking:${b.id}`));
+    inputs.push({ account, person, bankConfig, bookings });
+  }
+  if (inputs.length === 0) return null;
+
+  return {
+    documents: [{ name: 'camt.054.xml', content: generateCamt054(inputs) }],
+    ...(ranged ? {} : { deliveryKind: 'camt.054' as const, deliveryKeys: keys }),
+  };
+}
+
+function paymentStatusReports(store: AppStore, subscriber: Subscriber, range: DateFilter): DownloadOrderData {
+  const ranged = hasRange(range);
+  const delivered = ranged ? new Set<string>() : store.listDeliveredKeys(subscriber.partnerId, 'psr');
+  const events = store
+    .listPaymentStatusEvents({ partnerId: subscriber.partnerId, ...range })
+    .filter((e) => !delivered.has(`status:${e.id}`));
+  if (events.length === 0) return null;
+
+  const bic = store.getBankConfig()?.bic;
+  const documents = events.map((event) => {
+    const order = store.getPaymentOrder(event.paymentOrderId)!;
+    return {
+      name: `pain.002.psr.${String(event.id).padStart(8, '0')}.xml`,
+      content: generatePaymentStatusReport(order, store.listPaymentTransactions(order.id), event, bic),
+    };
+  });
+
+  return {
+    documents,
+    ...(ranged ? {} : { deliveryKind: 'psr' as const, deliveryKeys: events.map((e) => `status:${e.id}`) }),
+  };
+}
+
+function vopReports(store: AppStore, subscriber: Subscriber, range: DateFilter): DownloadOrderData {
+  const ranged = hasRange(range);
+  const delivered = ranged ? new Set<string>() : store.listDeliveredKeys(subscriber.partnerId, 'vop');
+
+  const byMessage = new Map<string, PaymentOrder[]>();
+  for (const order of store.listPaymentOrders({ partnerId: subscriber.partnerId }).reverse()) {
+    const day = order.createdAt.slice(0, 10);
+    if (range.from && day < range.from) continue;
+    if (range.to && day > range.to) continue;
+    if (delivered.has(`vop:${order.msgId}`)) continue;
+    byMessage.set(order.msgId, [...(byMessage.get(order.msgId) ?? []), order]);
+  }
+  if (byMessage.size === 0) return null;
+
+  const documents = [...byMessage.entries()].map(([msgId, orders], index) => ({
+    name: `pain.002.vop.${String(index + 1).padStart(4, '0')}.xml`,
+    content: generateVopReport(
+      msgId,
+      orders.map((order) => ({ order, transactions: store.listPaymentTransactions(order.id) })),
+      orders[0]!.createdAt,
+    ),
+  }));
+
+  return {
+    documents,
+    ...(ranged ? {} : { deliveryKind: 'vop' as const, deliveryKeys: [...byMessage.keys()].map((id) => `vop:${id}`) }),
+  };
 }
 
 function tryDynamicGeneration(

@@ -1,9 +1,21 @@
 # HAC (Customer Acknowledgement / Kundenprotokoll) — Implementation Plan
 
-Status: PLAN (2026-09-08). Current `handlers/hac.ts` emits a made-up `<HACResponseOrderData>` that
-no real client can parse. Replace it with the pain.002.001.03-format report that BIL, Spuerkeess and
-Sparkasse actually send, so the luxfit `HacProcessingService` (and any other client) can be tested
-end-to-end: upload → OrderID → lifecycle events → FINAL_POS / FINAL_NEG.
+Status: IMPLEMENTED (2026-09-12) behind `EBICS_HAC_FORMAT=pain.002`. The legacy `<HACResponseOrderData>`
+stays the default HAC output; the event ledger is recorded in both modes. Original goal: replace the
+made-up format with the pain.002.001.03-format report that BIL, Spuerkeess and Sparkasse actually send,
+so the luxfit `HacProcessingService` (and any other client) can be tested end-to-end: upload → OrderID →
+lifecycle events → FINAL_POS / FINAL_NEG.
+
+Deviations from the plan below:
+
+- No `FILE_DOWNLOAD` events for downloads.
+- No dialect or language flags: one German, Sparkasse-style attribute set. `Scope` and `ContainerType`
+  appear only when an event carries them.
+- No `090003` deny list.
+- Admin routes are `GET/POST /api/hac-events`, `GET /api/hac/report?partnerId=` and
+  `POST /api/payments/:id/release|cancel|reject` instead of `/api/uploaded-orders/:id/hac/final`.
+- Uploads that request EDS additionally produce `VEU_FORWARDING`, `VEU_VERIFICATION_END` and
+  `VEU_CANCEL_ORDER` events when `EBICS_EDS_HOLD=true`.
 
 ## 1. What real banks send (observed in luxfit prod, 5 active configs, 851 HAC pulls)
 

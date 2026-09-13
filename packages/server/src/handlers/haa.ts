@@ -37,6 +37,23 @@ export function handleHaa(
       service.ele(EBICS_NS.H005, 'Scope').txt('DE');
       orderInfo.ele(EBICS_NS.H005, 'Description').txt(`${sn}/${mn} statement`);
     }
+
+    const reports = [
+      ['STM', undefined, 'camt.052', 'Intraday account report'],
+      ['STM', 'SCI', 'camt.054', 'Debit/credit notification'],
+      ['REP', 'SCI', 'pain.002', 'Payment status report'],
+      ['REP', 'VOP', 'pain.002', 'Verification of Payee report'],
+    ] as const;
+    for (const [serviceName, serviceOption, msgName, description] of reports) {
+      const orderInfo = root.ele(EBICS_NS.H005, 'OrderInfo');
+      orderInfo.ele(EBICS_NS.H005, 'AdminOrderType').txt('BTD');
+      const service = orderInfo.ele(EBICS_NS.H005, 'Service');
+      service.ele(EBICS_NS.H005, 'ServiceName').txt(serviceName);
+      service.ele(EBICS_NS.H005, 'Scope').txt('DE');
+      if (serviceOption) service.ele(EBICS_NS.H005, 'ServiceOption').txt(serviceOption);
+      service.ele(EBICS_NS.H005, 'MsgName').txt(msgName);
+      orderInfo.ele(EBICS_NS.H005, 'Description').txt(description);
+    }
   }
 
   return root.end({ prettyPrint: true });

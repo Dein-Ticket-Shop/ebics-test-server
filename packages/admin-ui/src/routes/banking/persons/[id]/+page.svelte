@@ -14,6 +14,7 @@
   let showNewAccount = $state(false);
   let accountName = $state('');
   let currency = $state('EUR');
+  let accountNumber = $state('');
   let creating = $state(false);
   let error = $state('');
 
@@ -75,10 +76,16 @@
     creating = true;
     error = '';
     try {
-      await createAccount({ personId: data.person.id, name: accountName.trim(), currency: currency.trim() || 'EUR' });
+      await createAccount({
+        personId: data.person.id,
+        name: accountName.trim(),
+        currency: currency.trim() || 'EUR',
+        accountNumber: accountNumber.trim() || undefined,
+      });
       showNewAccount = false;
       accountName = '';
       currency = 'EUR';
+      accountNumber = '';
       await invalidateAll();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to create account';
@@ -172,6 +179,10 @@
       <div class="form-control w-24">
         <label class="label" for="accCur"><span class="label-text text-xs">Currency</span></label>
         <input id="accCur" type="text" class="input input-bordered input-sm font-mono" bind:value={currency} />
+      </div>
+      <div class="form-control w-40">
+        <label class="label" for="accNum"><span class="label-text text-xs">Account Number (optional)</span></label>
+        <input id="accNum" type="text" inputmode="numeric" maxlength="10" class="input input-bordered input-sm font-mono" bind:value={accountNumber} placeholder="auto" />
       </div>
       <button class="btn btn-primary btn-sm" disabled={creating || !accountName.trim()} onclick={handleCreateAccount}>
         {creating ? '...' : 'Create'}

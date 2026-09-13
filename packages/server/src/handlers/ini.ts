@@ -1,6 +1,7 @@
 import type { HandlerResult } from './handler-types.js';
 import type { XmlDocument } from '../protocol/xml-parser.js';
-import type { EbicsStore } from '../store/types.js';
+import type { AppStore } from '../store/types.js';
+import { recordKeyManagementOrder } from '../banking/order-events.js';
 import { SubscriberState } from '../store/types.js';
 import { xpathString, parseXml } from '../protocol/xml-parser.js';
 import { inflate, base64Decode } from '../protocol/crypto.js';
@@ -10,7 +11,7 @@ import { EBICS_NS } from '../protocol/constants.js';
 
 export function handleIni(
   doc: XmlDocument,
-  store: EbicsStore,
+  store: AppStore,
   configuredHostId: string,
 ): HandlerResult {
   const hostId = xpathString('//ebics:HostID/text()', doc);
@@ -68,7 +69,9 @@ export function handleIni(
 
   store.updateSubscriberState(partnerId, userId, newState);
 
-  return buildKeyManagementResponse(ReturnCode.EBICS_OK, ReturnCode.EBICS_OK);
+  const orderId = recordKeyManagementOrder(store, partnerId, userId, 'INI');
+
+  return buildKeyManagementResponse(ReturnCode.EBICS_OK, ReturnCode.EBICS_OK, undefined, orderId);
 }
 
 function extractText(doc: XmlDocument, localName: string): string | undefined {

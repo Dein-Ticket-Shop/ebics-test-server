@@ -126,3 +126,37 @@
 - [ ] E2E: full key exchange (INI → HIA → activate → HPB)
 - [ ] E2E: download flow
 - [ ] E2E: upload flow
+
+## Phase 7: SEPA Instant, reports and customer protocol
+
+- [x] EBICS OrderIDs per partner (`A000`…), returned in upload Initialisation/Transfer/Receipt responses and INI/HIA responses
+- [x] Schema migrations for existing SQLite files (new `transactions` / `uploaded_orders` columns)
+- [x] ZIP container support: BTD payloads are zipped when the request carries `Container containerType="ZIP"` (also camt.053, MT940 and seeded data)
+- [x] camt.053 entries carry `AcctSvcrRef` and `TxDtls/Refs` (AcctSvcrRef, EndToEndId, TxId), stable across camt.052/053/054
+- [x] BTD STM camt.052 intraday account report (DateRange, default today)
+- [x] BTD STM camt.054 debit/credit notifications (without DateRange only bookings not yet delivered)
+- [x] BTD REP pain.002 payment status reports, one document per status change
+- [x] BTD REP pain.002 with ServiceOption VOP: Verification of Payee reports per pain.001 message
+- [x] Delivery tracking: items handed out without DateRange are marked delivered on a positive receipt
+- [x] BTU SCI pain.001 (SEPA Instant): payment orders per PmtInf, VoP check, status history ACTC → ACSC
+- [x] Verification of Payee: name match against account holders held here, `EBICS_VOP_DEFAULT` for foreign creditors, admin override
+- [x] EDS hold (`EBICS_EDS_HOLD=true`): uploads with `requestEDS` wait in the VEU until release / cancel / reject
+- [x] HAC event ledger (FILE_UPLOAD, ES_VERIFICATION, VEU_FORWARDING, VEU_VERIFICATION_END, VEU_CANCEL_ORDER, ORDER_HAC_FINAL_POS/NEG) for BTU, INI/HIA (+ activation) and PUB/HCA/HCS
+- [x] HAC pain.002.001.03 customer protocol behind `EBICS_HAC_FORMAT=pain.002` (legacy format stays default), DateRange or undelivered events
+- [x] German protocol text with `Sammlerreferenz` on ORDER_HAC_FINAL_POS for credit transfers
+- [x] HKD/HTD/HAA advertise SCI, EOP camt.053, STM camt.052/camt.054, REP pain.002 (SCI and VOP)
+- [x] Admin API: `/api/config/flags`, `/api/payments` (release, cancel, reject, status events, VoP override, report previews), `/api/hac-events`, `/api/hac/report`, `/api/deliveries/reset`, statement preview camt.052/camt.054
+- [x] Admin UI: payment orders list and detail, customer protocol page, camt.052/camt.054 statement preview
+- [x] Tests: ZIP, order ledger store + migrations, VoP, report generators, payments/reports/HAC integration
+
+### Not yet supported (TODO)
+
+- [ ] PTK (customer protocol as text)
+- [ ] EDS admin orders HVZ / HVD / HVT / HVS / HVE (VEU overview, details, sign, cancel via EBICS — only the admin API can release or cancel today)
+- [ ] OTH + WebSocket real-time notifications
+- [ ] FILE_DOWNLOAD HAC events for downloads
+- [ ] Protocol text for pain.008 ORDER_HAC_FINAL_POS
+- [ ] Static download data keyed by ServiceOption (`download_data` is unique on service + msg name)
+- [ ] VoP confirmation workflow for no-match results (orders are executed regardless of the VoP result)
+- [ ] HAC `090003` deny list (subscriber not authorised for HAC)
+- [ ] XSD validation of pain.002 / camt payloads

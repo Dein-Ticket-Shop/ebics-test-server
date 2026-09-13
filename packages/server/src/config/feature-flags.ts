@@ -27,3 +27,51 @@ function envFlag(name: string): boolean {
 export function allowPreActivation(): boolean {
   return envFlag('EBICS_ALLOW_PREACTIVATION');
 }
+
+export type HacFormat = 'legacy' | 'pain.002';
+
+/**
+ * Order data format of HAC (customer acknowledgement) downloads.
+ *
+ * - `legacy` (default): the original test-server `HACResponseOrderData` listing.
+ * - `pain.002`: the pain.002.001.03 customer protocol real banks send, rendered
+ *   from the HAC event ledger (see docs/HAC_PLAN.md). Required by clients that
+ *   parse HAC.
+ *
+ * The event ledger itself is always recorded; this flag only selects the output.
+ *
+ * Enable with `EBICS_HAC_FORMAT=pain.002`.
+ */
+export function hacFormat(): HacFormat {
+  return process.env['EBICS_HAC_FORMAT'] === 'pain.002' ? 'pain.002' : 'legacy';
+}
+
+/**
+ * When true, credit transfer uploads that request a distributed electronic
+ * signature (`BTUOrderParams/SignatureFlag/@requestEDS="true"`) are held in the
+ * VEU until an admin releases, cancels or rejects them — like a real bank that
+ * waits for the second signature. Nothing is booked while an order is held.
+ *
+ * Default (false) keeps the original behaviour: every upload is executed and
+ * booked immediately.
+ *
+ * Enable with `EBICS_EDS_HOLD=true`.
+ */
+export function edsHold(): boolean {
+  return envFlag('EBICS_EDS_HOLD');
+}
+
+export type VopStatus = 'RCVC' | 'RVMC' | 'RVNM' | 'RVNA';
+const VOP_STATUSES: readonly VopStatus[] = ['RCVC', 'RVMC', 'RVNM', 'RVNA'];
+
+/**
+ * Verification of Payee result for creditors whose IBAN is not held at this bank
+ * (their name cannot be checked locally). Creditors held here are matched against
+ * the account owner's name instead.
+ *
+ * Default `RCVC` (match). Set `EBICS_VOP_DEFAULT` to `RVMC`, `RVNM` or `RVNA`.
+ */
+export function vopDefaultStatus(): VopStatus {
+  const value = process.env['EBICS_VOP_DEFAULT'] as VopStatus | undefined;
+  return value && VOP_STATUSES.includes(value) ? value : 'RCVC';
+}

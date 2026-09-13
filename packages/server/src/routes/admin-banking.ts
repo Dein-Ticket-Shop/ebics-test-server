@@ -3,6 +3,8 @@ import type { AppStore } from '../store/types.js';
 import { calculateIban, validateBic, validateBlz } from '../banking/iban.js';
 import { generateCamt053 } from '../banking/generators/camt053.js';
 import { generateMt940 } from '../banking/generators/mt940.js';
+import { generateCamt052 } from '../banking/generators/camt052.js';
+import { generateCamt054 } from '../banking/generators/camt054.js';
 
 export function createBankingAdminRoute(store: AppStore) {
   const app = new Hono();
@@ -87,6 +89,8 @@ export function createBankingAdminRoute(store: AppStore) {
       personId: number;
       currency?: string;
       name: string;
+      /** Optional national account number (up to 10 digits), e.g. to recreate a client's real IBAN */
+      accountNumber?: string;
     }>();
 
     const bankConfig = store.getBankConfig();
@@ -95,9 +99,15 @@ export function createBankingAdminRoute(store: AppStore) {
     const person = store.getPerson(body.personId);
     if (!person) return c.json({ error: 'Person not found' }, 404);
 
-    const seq = store.getNextAccountSequence();
-    const accountNumber = seq.toString().padStart(10, '0');
+    const requested = body.accountNumber?.replace(/\s/g, '');
+    if (requested && !/^\d{1,10}$/.test(requested)) {
+      return c.json({ error: 'Invalid account number: up to 10 digits' }, 400);
+    }
+    const accountNumber = (requested || store.getNextAccountSequence().toString()).padStart(10, '0');
     const iban = calculateIban(bankConfig.blz, accountNumber);
+    if (store.getAccountByIban(iban)) {
+      return c.json({ error: `Account ${iban} already exists` }, 409);
+    }
 
     const account = store.createAccount({
       personId: body.personId,
@@ -222,6 +232,16 @@ export function createBankingAdminRoute(store: AppStore) {
     if (format === 'mt940') {
       const content = generateMt940(account, bankConfig, bookings, openingBalance, fromDate, toDate);
       return c.text(content);
+    }
+
+    if (format === 'camt.052') {
+      const content = generateCamt052([{ account, person, bankConfig, bookings, openingBalanceCents: openingBalance }], fromDate, toDate);
+      return c.body(content, 200, { 'Content-Type': 'application/xml; charset=utf-8' });
+    }
+
+    if (format === 'camt.054') {
+      const content = generateCamt054([{ account, person, bankConfig, bookings }]);
+      return c.body(content, 200, { 'Content-Type': 'application/xml; charset=utf-8' });
     }
 
     const content = generateCamt053(account, person, bankConfig, bookings, openingBalance, fromDate, toDate);

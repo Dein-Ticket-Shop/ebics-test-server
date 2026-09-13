@@ -93,6 +93,8 @@ export function buildHpbOrderData(
 }
 
 export interface EbicsResponseOptions {
+  /** EBICS OrderID of an upload, echoed in every response of its transaction */
+  orderId?: string;
   technicalCode: ReturnCode;
   businessCode: ReturnCode;
   transactionId?: string;
@@ -129,6 +131,9 @@ export function buildEbicsResponse(options: EbicsResponseOptions): HandlerResult
     mutable.ele(EBICS_NS.H005, 'SegmentNumber')
       .att('lastSegment', String(options.lastSegment ?? false))
       .txt(String(options.segmentNumber));
+  }
+  if (options.orderId) {
+    mutable.ele(EBICS_NS.H005, 'OrderID').txt(options.orderId);
   }
   mutable.ele(EBICS_NS.H005, 'ReturnCode').txt(options.technicalCode);
   mutable.ele(EBICS_NS.H005, 'ReportText').txt(getReportText(options.technicalCode));

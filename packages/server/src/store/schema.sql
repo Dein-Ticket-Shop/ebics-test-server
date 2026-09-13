@@ -150,3 +150,87 @@ CREATE TABLE IF NOT EXISTS activity_log (
     details TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- EBICS order IDs (OrderIDType: [A-Z][A-Z0-9]{3}), allocated per partner for uploads and key management orders
+CREATE TABLE IF NOT EXISTS order_id_counters (
+    partner_id TEXT PRIMARY KEY,
+    next INTEGER NOT NULL DEFAULT 0
+);
+
+-- Bank-side order lifecycle steps, the source of the HAC customer protocol (docs/HAC_PLAN.md)
+CREATE TABLE IF NOT EXISTS hac_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    partner_id TEXT NOT NULL,
+    user_id TEXT,
+    order_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    admin_order_type TEXT NOT NULL,
+    service_name TEXT,
+    service_option TEXT,
+    scope TEXT,
+    container_type TEXT,
+    msg_name TEXT,
+    order_id_ref TEXT,
+    admin_order_type_ref TEXT,
+    reason_code TEXT,
+    additional_info TEXT NOT NULL DEFAULT '[]',
+    event_at TEXT NOT NULL,
+    uploaded_order_id INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_hac_events_partner_time ON hac_events(partner_id, event_at, id);
+
+-- Credit transfer orders received via pain.001 uploads, one row per PmtInf (Sammler)
+CREATE TABLE IF NOT EXISTS payment_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id TEXT NOT NULL,
+    uploaded_order_id INTEGER,
+    partner_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    service_name TEXT NOT NULL,
+    service_option TEXT,
+    msg_name TEXT NOT NULL,
+    msg_id TEXT NOT NULL,
+    pmt_inf_id TEXT NOT NULL,
+    debtor_name TEXT,
+    debtor_iban TEXT,
+    requested_eds INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS payment_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id) ON DELETE CASCADE,
+    end_to_end_id TEXT,
+    creditor_name TEXT,
+    creditor_iban TEXT,
+    creditor_bic TEXT,
+    amount_cents INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'EUR',
+    remittance_info TEXT,
+    vop_status TEXT NOT NULL DEFAULT 'RVNA',
+    vop_corrected_name TEXT,
+    debit_booking_id INTEGER,
+    credit_booking_id INTEGER
+);
+
+-- pain.002 payment status history per payment order (source of PSR downloads)
+CREATE TABLE IF NOT EXISTS payment_status_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    reason_code TEXT,
+    additional_info TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- Items already fetched by a partner via a download without DateRange (marked on positive receipt)
+CREATE TABLE IF NOT EXISTS deliveries (
+    partner_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    delivered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (partner_id, kind, item_key)
+);
