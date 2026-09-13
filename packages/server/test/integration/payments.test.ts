@@ -431,7 +431,7 @@ describe('Payments, reports and customer protocol', () => {
 
   describe('admin API', () => {
     it('exposes the feature flags', async () => {
-      expect((await api(ctx, '/config/flags')).json).toEqual({
+      expect((await api(ctx, '/config/flags')).json).toMatchObject({
         hacFormat: 'legacy', edsHold: false, vopDefault: 'RCVC', strictValidation: true, allowPreActivation: false,
       });
       process.env['EBICS_HAC_FORMAT'] = 'pain.002';

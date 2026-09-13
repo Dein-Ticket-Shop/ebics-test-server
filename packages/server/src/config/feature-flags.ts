@@ -75,3 +75,47 @@ export function vopDefaultStatus(): VopStatus {
   const value = process.env['EBICS_VOP_DEFAULT'] as VopStatus | undefined;
   return value && VOP_STATUSES.includes(value) ? value : 'RCVC';
 }
+
+/**
+ * When true, BTD and administrative downloads (except HAC and PTK themselves) append a FILE_DOWNLOAD
+ * event to the HAC ledger, like banks whose customer protocol also lists downloads.
+ *
+ * Enable with `EBICS_HAC_DOWNLOAD_EVENTS=true`.
+ */
+export function hacDownloadEvents(): boolean {
+  return envFlag('EBICS_HAC_DOWNLOAD_EVENTS');
+}
+
+/**
+ * Partner IDs that are not authorised for the customer protocol: their HAC and PTK downloads are
+ * answered with EBICS_AUTHORISATION_ORDER_TYPE_FAILED (090003).
+ *
+ * Set `EBICS_HAC_DENY_PARTNERS=PARTNER1,PARTNER2`.
+ */
+export function hacDeniedPartners(): string[] {
+  return (process.env['EBICS_HAC_DENY_PARTNERS'] ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+/**
+ * When true, credit transfers whose Verification of Payee result is not a full match (RCVC) are held
+ * in the VEU until someone confirms them with an electronic signature (HVE) or an admin releases
+ * them. Default (false): orders are executed regardless of the VoP result.
+ *
+ * Enable with `EBICS_VOP_CONFIRMATION=true`.
+ */
+export function vopConfirmationRequired(): boolean {
+  return envFlag('EBICS_VOP_CONFIRMATION');
+}
+
+/**
+ * When true, wssparam hands out one-time tokens (OTT "Y"): each token opens a single WebSocket connection.
+ * Default (false): tokens (OTT "N") can reconnect until their VALIDITY ends.
+ *
+ * Enable with `EBICS_WSS_ONE_TIME_TOKEN=true`.
+ */
+export function wssOneTimeTokens(): boolean {
+  return envFlag('EBICS_WSS_ONE_TIME_TOKEN');
+}

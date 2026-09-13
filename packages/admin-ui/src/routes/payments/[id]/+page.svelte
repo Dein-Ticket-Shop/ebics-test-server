@@ -144,7 +144,16 @@
   <div class="bg-warning/10 border border-warning/20 rounded-xl p-4 mb-6 text-sm flex items-center justify-between gap-4">
     <div>
       <div class="font-medium text-warning mb-1">Awaiting electronic distributed signature</div>
+      <ul class="list-disc ml-5 mb-1">
+        {#if p.signaturesRequired > 1}
+          <li>Waiting for a second signature</li>
+        {/if}
+        {#if p.vopConfirmationRequired}
+          <li>Waiting for VoP confirmation</li>
+        {/if}
+      </ul>
       The order is held in the VEU. Release books the payments; cancel or reject completes it without booking.
+      <a href="{base}/veu?partnerId={encodeURIComponent(p.partnerId)}" class="link link-hover font-medium ml-1">Open in VEU</a>
     </div>
     <div class="flex gap-2 shrink-0">
       <button class="btn btn-success btn-sm" disabled={busy} onclick={handleRelease}>Release</button>

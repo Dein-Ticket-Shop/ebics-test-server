@@ -6,6 +6,7 @@ import { generateMt940 } from '../banking/generators/mt940.js';
 import { generateCamt052 } from '../banking/generators/camt052.js';
 import { generateCamt054 } from '../banking/generators/camt054.js';
 import { generatePaymentStatusReport, generateVopReport } from '../banking/generators/pain002.js';
+import { websocketParameters } from './oth.js';
 
 export function handleBtd(
   ctx: HandlerContext,
@@ -22,7 +23,7 @@ export function handleBtd(
   }
 
   // Static seeding takes priority — explicit download_data overrides dynamic generation
-  const data = store.getDownloadData(serviceName, msgName ?? undefined);
+  const data = store.getDownloadData(serviceName, msgName ?? undefined, serviceOption ?? undefined);
   if (data) {
     return data.content;
   }
@@ -60,6 +61,7 @@ function tryReportGeneration(
   msgName: string | undefined,
   ctx: HandlerContext,
 ): DownloadOrderData | undefined {
+  if (serviceName === 'OTH' && msgName === 'wssparam') return websocketParameters(store, subscriber, ctx);
   if (serviceName === 'STM' && msgName === 'camt.052') return intradayReport(store, subscriber, readDateRange(ctx));
   if (serviceName === 'STM' && msgName === 'camt.054') return notifications(store, subscriber, readDateRange(ctx));
   if (serviceName === 'REP' && msgName === 'pain.002') {

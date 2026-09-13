@@ -3,7 +3,7 @@ import { ReturnCode } from '../protocol/return-codes.js';
 import { processPain001 } from '../banking/processors/pain001.js';
 import { processPain008 } from '../banking/processors/pain008.js';
 import { OrderDataError, OrderAuthError } from '../banking/validation.js';
-import { receiveCreditTransfers } from '../banking/payments.js';
+import { directDebitProtocolText, receiveCreditTransfers } from '../banking/payments.js';
 import { recordUploadCompleted, recordUploadRejected, type OrderContext } from '../banking/order-events.js';
 import { logError } from '../logger.js';
 
@@ -67,7 +67,7 @@ export function handleBtu(
     } else if (msgName === 'pain.008') {
       processPain008(rawContent, store, subscriber.partnerId);
       store.markUploadedOrderProcessed(order.id);
-      if (events) recordUploadCompleted(store, events);
+      if (events) recordUploadCompleted(store, events, directDebitProtocolText(store, rawContent));
     } else if (events) {
       recordUploadCompleted(store, events);
     }

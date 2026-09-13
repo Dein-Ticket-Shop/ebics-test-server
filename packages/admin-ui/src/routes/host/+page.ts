@@ -1,6 +1,6 @@
-import { getHost } from '$lib/api.js';
+import { getHost, getServerFlags } from '$lib/api.js';
 
 export async function load() {
-  const host = await getHost().catch(() => null);
-  return { host };
+  const [host, flags] = await Promise.all([getHost().catch(() => null), getServerFlags().catch(() => null)]);
+  return { host, flags };
 }

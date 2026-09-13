@@ -2,7 +2,7 @@
   import { goto, invalidateAll } from '$app/navigation';
   import { base } from '$app/paths';
   import Icon from '$lib/components/Icon.svelte';
-  import { createHacEvent, getHacReportUrl, resetDeliveries } from '$lib/api.js';
+  import { createHacEvent, getHacReportUrl, getPtkReportUrl, resetDeliveries } from '$lib/api.js';
   import type { HacEvent, ServerFlags, Subscriber } from '$lib/types.js';
   import { HAC_ACTIONS, hacActionBadge, formatDateTime, splitLines } from '$lib/payments.js';
 
@@ -24,6 +24,11 @@
   function previewReport() {
     if (!data.partnerId) return;
     window.open(getHacReportUrl(data.partnerId), '_blank');
+  }
+
+  function previewPtk() {
+    if (!data.partnerId) return;
+    window.open(getPtkReportUrl(data.partnerId), '_blank');
   }
 
   async function handleRedeliver() {
@@ -118,6 +123,9 @@
     <button class="btn btn-sm btn-outline gap-1.5" disabled={!data.partnerId} title={data.partnerId ? '' : 'Select a partner first'} onclick={previewReport}>
       <Icon name="download" class="w-3.5 h-3.5" /> Preview report
     </button>
+    <button class="btn btn-sm btn-outline gap-1.5" disabled={!data.partnerId} title={data.partnerId ? '' : 'Select a partner first'} onclick={previewPtk}>
+      <Icon name="download" class="w-3.5 h-3.5" /> Preview PTK text
+    </button>
     <button class="btn btn-sm btn-ghost" onclick={handleRedeliver}>Re-deliver all</button>
     <button class="btn btn-primary btn-sm gap-1.5" onclick={openForm}>
       <Icon name="plus" class="w-4 h-4" /> Add event
@@ -135,6 +143,13 @@
 {:else if data.flags?.hacFormat === 'pain.002'}
   <div class="bg-success/10 border border-success/20 rounded-xl p-4 mb-6 text-sm">
     HAC downloads return these events as a pain.002 customer protocol. Without a DateRange, only events not yet delivered are returned.
+  </div>
+{/if}
+
+{#if data.flags?.hacDeniedPartners?.length}
+  <div class="bg-warning/10 border border-warning/20 rounded-xl p-4 mb-6 text-sm">
+    HAC and PTK downloads are refused with <span class="font-mono">090003</span> for
+    <span class="font-mono">{data.flags.hacDeniedPartners.join(', ')}</span> (<span class="font-mono">EBICS_HAC_DENY_PARTNERS</span>).
   </div>
 {/if}
 

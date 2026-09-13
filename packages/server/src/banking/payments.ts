@@ -6,7 +6,9 @@ import type {
   VopStatus,
 } from '../store/types.js';
 import { parseXml } from '../protocol/xml-parser.js';
-import { edsHold } from '../config/feature-flags.js';
+import { edsHold, vopConfirmationRequired } from '../config/feature-flags.js';
+import { vopGroupStatus } from './generators/pain002.js';
+import { xpathSelect } from '../protocol/xml-parser.js';
 import { bookCreditTransfer, parsePain001, validatePain001 } from './processors/pain001.js';
 import { verifyPayee } from './vop.js';
 import { recordEvent, recordFinal, type OrderContext } from './order-events.js';
@@ -101,8 +103,20 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
   const instructions = parsePain001(doc);
   validatePain001(doc, instructions, store, upload.partnerId);
 
-  const hold = upload.requestEds && edsHold();
-  const orders = instructions.map((instruction) =>
+  const verified = instructions.map((instruction) => ({
+    instruction,
+    transactions: instruction.transactions.map((tx) => {
+      const vop = verifyPayee(store, tx.creditorIban, tx.creditorName);
+      return { ...tx, vopStatus: vop.status, vopCorrectedName: vop.correctedName };
+    }),
+  }));
+
+  const edsRequired = upload.requestEds && edsHold();
+  const vopGroup = vopGroupStatus(verified.flatMap((v) => v.transactions.map((tx) => tx.vopStatus)));
+  const vopHold = vopConfirmationRequired() && verified.length > 0 && vopGroup !== 'RCVC';
+  const hold = edsRequired || vopHold;
+
+  const orders = verified.map(({ instruction, transactions }) =>
     store.createPaymentOrder(
       {
         orderId: upload.orderId,
@@ -117,24 +131,28 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
         debtorName: instruction.debtorName,
         debtorIban: instruction.debtorIban,
         requestedEds: upload.requestEds,
+        signaturesRequired: edsRequired ? 2 : 1,
+        vopConfirmationRequired: vopHold,
         status: 'PENDING_EDS',
       },
-      instruction.transactions.map((tx) => {
-        const vop = verifyPayee(store, tx.creditorIban, tx.creditorName);
-        return { ...tx, vopStatus: vop.status, vopCorrectedName: vop.correctedName };
-      }),
+      transactions,
     ),
   );
   for (const order of orders) {
     store.appendPaymentStatusEvent({ paymentOrderId: order.id, status: 'ACTC' });
   }
+  // The electronic signature sent with the upload is the order's first VEU signature
+  store.addOrderSignature({ partnerId: upload.partnerId, orderId: upload.orderId, userId: upload.userId, kind: 'UPLOAD' });
 
   const ctx = orderContext(upload);
   recordEvent(store, ctx, 'FILE_UPLOAD', { reasonCode: 'TS01' });
   recordEvent(store, ctx, 'ES_VERIFICATION', { reasonCode: 'DS01' });
 
   if (hold) {
-    recordEvent(store, ctx, 'VEU_FORWARDING', { reasonCode: 'DS06' });
+    recordEvent(store, ctx, 'VEU_FORWARDING', {
+      reasonCode: 'DS06',
+      additionalInfo: vopHold ? [`Empfaengerueberpruefung ${vopGroup}: Bestaetigung per Unterschrift erforderlich`] : [],
+    });
   } else {
     executeOrders(store, orders);
     recordFinal(store, ctx, true, creditTransferProtocolText(store, orders));
@@ -183,8 +201,16 @@ export function releasePaymentOrder(store: AppStore, id: number): PaymentOrder {
   return store.getPaymentOrder(id)!;
 }
 
-/** Cancelled by an authorised user in the VEU (HVS): nothing is booked, the order ends positively */
-export function cancelPaymentOrder(store: AppStore, id: number, additionalInfo: string[] = []): PaymentOrder {
+/**
+ * Cancelled by an authorised user in the VEU (HVS): nothing is booked, the order ends positively.
+ * `cancelledBy` names the user and the OrderID of the HVS; by default the uploader and a new OrderID.
+ */
+export function cancelPaymentOrder(
+  store: AppStore,
+  id: number,
+  additionalInfo: string[] = [],
+  cancelledBy?: { userId: string; orderId?: string },
+): PaymentOrder {
   const order = requirePending(store, id);
   const orders = ordersOfSameUpload(store, order).filter((o) => o.status === 'PENDING_EDS');
   for (const o of orders) {
@@ -194,7 +220,12 @@ export function cancelPaymentOrder(store: AppStore, id: number, additionalInfo: 
   const ctx = orderContext(order);
   recordEvent(
     store,
-    { partnerId: order.partnerId, userId: order.userId, orderId: store.nextOrderId(order.partnerId), adminOrderType: 'HVS' },
+    {
+      partnerId: order.partnerId,
+      userId: cancelledBy?.userId ?? order.userId,
+      orderId: cancelledBy?.orderId ?? store.nextOrderId(order.partnerId),
+      adminOrderType: 'HVS',
+    },
     'VEU_CANCEL_ORDER',
     { reasonCode: 'DS02', orderIdRef: order.orderId, adminOrderTypeRef: 'BTU', additionalInfo },
   );
@@ -255,4 +286,38 @@ export function overrideVop(
     vopCorrectedName: status === 'RVMC' ? correctedName : undefined,
   });
   return store.getPaymentTransaction(transactionId)!;
+}
+
+/** German bank protocol text (Sparkasse layout) for a pain.008 direct debit upload, one section per PmtInf */
+export function directDebitProtocolText(store: AppStore, rawContent: string): string[] {
+  const doc = parseXml(rawContent);
+  const select = (node: unknown, path: string) =>
+    xpathSelect(`./${path.split('/').map((name) => `*[local-name()='${name}']`).join('/')}`, node as never) as Node[];
+  const text = (node: unknown, path: string) => select(node, path)[0]?.textContent?.trim() ?? '';
+  const root = doc.documentElement;
+  const bic = store.getBankConfig()?.bic ?? '';
+  const now = new Date().toISOString();
+  const lines = [
+    '============================================================',
+    'L A S T S C H R I F T E N',
+    `Datei-ID   : ${text(root, 'CstmrDrctDbtInitn/GrpHdr/MsgId')}`,
+    `Datum/Zeit : ${formatDate(now)}/${now.slice(11)}`,
+  ];
+  for (const pmtInf of select(root, 'CstmrDrctDbtInitn/PmtInf')) {
+    const transactions = select(pmtInf, 'DrctDbtTxInf');
+    const totalCents = transactions.reduce((sum, tx) => sum + Math.round(parseFloat(text(tx, 'InstdAmt') || '0') * 100), 0);
+    const dueDate = text(pmtInf, 'ReqdColltnDt');
+    lines.push(
+      '------------------------------------------------------------',
+      `Sammlerreferenz          : ${text(pmtInf, 'PmtInfId')}`,
+      `Bank-Code                : ${bic}`,
+      `Kontonummer              : ${text(pmtInf, 'CdtrAcct/Id/IBAN')}`,
+      `Auftraggeberdaten        : ${text(pmtInf, 'Cdtr/Nm')}`,
+      `Anzahl der Zahlungssaetze: ${transactions.length}`,
+      `Summe der Betraege (EUR) : ${formatEuro(totalCents)}`,
+      `Faelligkeitsdatum        : ${dueDate ? formatDate(dueDate) : ''}`,
+    );
+  }
+  lines.push('============================================================');
+  return lines;
 }

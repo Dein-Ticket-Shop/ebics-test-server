@@ -17,6 +17,8 @@
     { href: '/host', label: 'Host Config', icon: 'host' },
     { href: '/activity', label: 'Activity Log', icon: 'activity' },
     { href: '/protocol-log', label: 'Protocol Log', icon: 'protocol' },
+    { href: '/realtime', label: 'Real-time', icon: 'realtime' },
+    { href: '/download-data', label: 'Download Data', icon: 'data' },
   ];
 
   const bankingItems = [
@@ -27,6 +29,7 @@
 
   const paymentItems = [
     { href: '/payments', label: 'Payment Orders', icon: 'payments', exact: false },
+    { href: '/veu', label: 'VEU', icon: 'veu', exact: false },
     { href: '/hac', label: 'Customer Protocol', icon: 'hac', exact: false },
   ];
 

@@ -43,6 +43,7 @@ export function handleHaa(
       ['STM', 'SCI', 'camt.054', 'Debit/credit notification'],
       ['REP', 'SCI', 'pain.002', 'Payment status report'],
       ['REP', 'VOP', 'pain.002', 'Verification of Payee report'],
+      ['OTH', undefined, 'wssparam', 'Real-time notification connection parameters'],
     ] as const;
     for (const [serviceName, serviceOption, msgName, description] of reports) {
       const orderInfo = root.ele(EBICS_NS.H005, 'OrderInfo');

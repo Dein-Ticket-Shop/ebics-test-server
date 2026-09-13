@@ -1,10 +1,13 @@
 import type { DeliveryKind } from '../store/types.js';
+import type { ReturnCode } from '../protocol/return-codes.js';
 import type { XmlDocument } from '../protocol/xml-parser.js';
 
 export interface HandlerContext {
   rawXml: string;
   doc: XmlDocument;
   hostId: string;
+  /** URL of the EBICS request, used to build URLs handed to the client (e.g. the real-time endpoint) */
+  requestUrl?: string;
 }
 
 export interface HandlerLogEntry {
@@ -23,7 +26,7 @@ export type EbicsHandler = (ctx: HandlerContext) => HandlerResult | Promise<Hand
 
 export interface DownloadDocument {
   name: string;
-  content: string;
+  content: string | Buffer;
 }
 
 /**
@@ -38,3 +41,14 @@ export interface DownloadPayload {
 }
 
 export type DownloadOrderData = string | DownloadPayload | null;
+
+/** Thrown by an order handler to answer with an EBICS business return code instead of order data */
+export class OrderRejection extends Error {
+  constructor(
+    readonly returnCode: ReturnCode,
+    message?: string,
+  ) {
+    super(message ?? returnCode);
+    this.name = 'OrderRejection';
+  }
+}

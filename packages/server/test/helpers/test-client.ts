@@ -548,3 +548,176 @@ export function buildPain001Document(options: { msgId: string; payments: Pain001
   </CstmrCdtTrfInitn>
 </Document>`;
 }
+
+// VEU (distributed electronic signature) helpers
+
+/** The order an HVD/HVT/HVE/HVS request refers to (HVRequestStructure) */
+export interface VeuOrderRef {
+  partnerId: string;
+  orderId: string;
+  serviceName: string;
+  msgName: string;
+  scope?: string;
+  serviceOption?: string;
+}
+
+function hvRequestStructure(ref: VeuOrderRef): string {
+  const scope = ref.scope ? `<Scope>${ref.scope}</Scope>` : '';
+  const option = ref.serviceOption ? `<ServiceOption>${ref.serviceOption}</ServiceOption>` : '';
+  return `<PartnerID>${ref.partnerId}</PartnerID><Service><ServiceName>${ref.serviceName}</ServiceName>${scope}${option}<MsgName>${ref.msgName}</MsgName></Service><OrderID>${ref.orderId}</OrderID>`;
+}
+
+/** HVZOrderParams without service filter: every order waiting for signatures */
+export function hvzOrderParams(): string {
+  return '<HVZOrderParams xmlns="urn:org:ebics:H005"/>';
+}
+
+export function hvdOrderParams(ref: VeuOrderRef): string {
+  return `<HVDOrderParams xmlns="urn:org:ebics:H005">${hvRequestStructure(ref)}</HVDOrderParams>`;
+}
+
+export function hvtOrderParams(
+  ref: VeuOrderRef,
+  flags: { completeOrderData: boolean; fetchLimit?: number; fetchOffset?: number },
+): string {
+  return `<HVTOrderParams xmlns="urn:org:ebics:H005">${hvRequestStructure(ref)}<OrderFlags completeOrderData="${flags.completeOrderData}" fetchLimit="${flags.fetchLimit ?? 100}" fetchOffset="${flags.fetchOffset ?? 0}"/></HVTOrderParams>`;
+}
+
+/** Download Initialisation with caller-provided order params XML (e.g. from hvzOrderParams) */
+export function buildEbicsOrderParamsDownloadInitRequest(
+  hostId: string,
+  partnerId: string,
+  userId: string,
+  keys: TestClientKeys,
+  bankCerts: BankCerts,
+  orderType: string,
+  orderParamsXml: string,
+): string {
+  const nonce = generateNonce();
+  const timestamp = new Date().toISOString();
+  const authDigest = computeCertDigest(bankCerts.authCertPem);
+  const encDigest = computeCertDigest(bankCerts.encCertPem);
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>${orderType}</AdminOrderType>${orderParamsXml}</OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0000</SecurityMedium></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body/></ebicsRequest>`;
+
+  return signEbicsRequest(xml, keys.authKeyPair.privateKey);
+}
+
+/**
+ * Encrypted UserSignatureData naming the signer, like encryptUploadContent but without order data.
+ * `compress: false` skips the deflate step, so the bank can decrypt but not inflate the data.
+ */
+export function encryptSignatureData(
+  bankEncPubKeyPem: string,
+  signer: { partnerId: string; userId: string },
+  options: { compress?: boolean } = {},
+): { wrappedKey: string; signatureDataB64: string } {
+  const txKey = randomBytes(16);
+  const sigXml = `<?xml version="1.0" encoding="UTF-8"?><UserSignatureData xmlns="http://www.ebics.org/S002"><OrderSignatureData><SignatureVersion>A006</SignatureVersion><SignatureValue>${randomBytes(32).toString('base64')}</SignatureValue><PartnerID>${signer.partnerId}</PartnerID><UserID>${signer.userId}</UserID></OrderSignatureData></UserSignatureData>`;
+  const cipher = createCipheriv('aes-128-cbc', txKey, Buffer.alloc(16, 0));
+  const plain = Buffer.from(sigXml, 'utf8');
+  const signatureDataB64 = Buffer.concat([cipher.update(options.compress === false ? plain : deflateSync(plain)), cipher.final()]).toString('base64');
+  const wrappedKey = publicEncrypt({ key: bankEncPubKeyPem, padding: constants.RSA_PKCS1_PADDING }, txKey).toString('base64');
+  return { wrappedKey, signatureDataB64 };
+}
+
+export interface VeuSignatureOptions {
+  /** Signer named in the UserSignatureData; defaults to the requesting subscriber */
+  signer?: { partnerId: string; userId: string };
+  /** DataDigest sent in the body; defaults to random bytes */
+  dataDigest?: string;
+  /** false sends signature data that is encrypted but not deflated (undecodable for the bank) */
+  compressSignatureData?: boolean;
+}
+
+/**
+ * HVE (sign) or HVS (cancel) request: HV*OrderParams, NumSegments 0 and a body with only
+ * DataEncryptionInfo, SignatureData and DataDigest. The signer defaults to the requesting subscriber.
+ */
+export function buildEbicsVeuSignatureRequest(
+  hostId: string,
+  partnerId: string,
+  userId: string,
+  keys: TestClientKeys,
+  bankCerts: BankCerts,
+  orderType: 'HVE' | 'HVS',
+  ref: VeuOrderRef,
+  bankEncPubKeyPem: string,
+  options: VeuSignatureOptions = {},
+): string {
+  const nonce = generateNonce();
+  const timestamp = new Date().toISOString();
+  const authDigest = computeCertDigest(bankCerts.authCertPem);
+  const encDigest = computeCertDigest(bankCerts.encCertPem);
+  const signature = encryptSignatureData(bankEncPubKeyPem, options.signer ?? { partnerId, userId }, { compress: options.compressSignatureData });
+  const dataDigest = options.dataDigest ?? randomBytes(32).toString('base64');
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>${orderType}</AdminOrderType><${orderType}OrderParams xmlns="urn:org:ebics:H005">${hvRequestStructure(ref)}</${orderType}OrderParams></OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0200</SecurityMedium><NumSegments>0</NumSegments></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body><DataTransfer><DataEncryptionInfo authenticate="true"><EncryptionPubKeyDigest Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</EncryptionPubKeyDigest><TransactionKey>${signature.wrappedKey}</TransactionKey></DataEncryptionInfo><SignatureData authenticate="true">${signature.signatureDataB64}</SignatureData><DataDigest SignatureVersion="A006">${dataDigest}</DataDigest></DataTransfer></body></ebicsRequest>`;
+
+  return signEbicsRequest(xml, keys.authKeyPair.privateKey);
+}
+
+// Direct debit document helper
+
+export interface Pain008Transaction {
+  endToEndId: string;
+  debtorName: string;
+  debtorIban: string;
+  /** decimal, e.g. "12.34" */
+  amount: string;
+  mandateId: string;
+  remittance?: string;
+}
+
+export interface Pain008Payment {
+  pmtInfId: string;
+  creditorName: string;
+  creditorIban: string;
+  /** YYYY-MM-DD, defaults to today */
+  collectionDate?: string;
+  transactions: Pain008Transaction[];
+}
+
+/** pain.008.001.08 SEPA core direct debit, one PmtInf per payment */
+export function buildPain008Document(options: { msgId: string; payments: Pain008Payment[] }): string {
+  const allTx = options.payments.flatMap((p) => p.transactions);
+  const sum = (txs: Pain008Transaction[]) => txs.reduce((total, tx) => total + parseFloat(tx.amount), 0).toFixed(2);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const pmtInfs = options.payments
+    .map(
+      (payment) => `<PmtInf>
+      <PmtInfId>${payment.pmtInfId}</PmtInfId><PmtMtd>DD</PmtMtd><BtchBookg>false</BtchBookg>
+      <NbOfTxs>${payment.transactions.length}</NbOfTxs><CtrlSum>${sum(payment.transactions)}</CtrlSum>
+      <PmtTpInf><SvcLvl><Cd>SEPA</Cd></SvcLvl><LclInstrm><Cd>CORE</Cd></LclInstrm><SeqTp>RCUR</SeqTp></PmtTpInf>
+      <ReqdColltnDt>${payment.collectionDate ?? today}</ReqdColltnDt>
+      <Cdtr><Nm>${payment.creditorName}</Nm></Cdtr>
+      <CdtrAcct><Id><IBAN>${payment.creditorIban}</IBAN></Id></CdtrAcct>
+      <CdtrAgt><FinInstnId><BICFI>ETBADE2AXXX</BICFI></FinInstnId></CdtrAgt>
+      <ChrgBr>SLEV</ChrgBr>
+      <CdtrSchmeId><Id><PrvtId><Othr><Id>DE98ZZZ09999999999</Id><SchmeNm><Prtry>SEPA</Prtry></SchmeNm></Othr></PrvtId></Id></CdtrSchmeId>
+      ${payment.transactions
+        .map(
+          (tx) => `<DrctDbtTxInf>
+        <PmtId><EndToEndId>${tx.endToEndId}</EndToEndId></PmtId>
+        <InstdAmt Ccy="EUR">${tx.amount}</InstdAmt>
+        <DrctDbtTx><MndtRltdInf><MndtId>${tx.mandateId}</MndtId><DtOfSgntr>2024-01-01</DtOfSgntr></MndtRltdInf></DrctDbtTx>
+        <DbtrAgt><FinInstnId><Othr><Id>NOTPROVIDED</Id></Othr></FinInstnId></DbtrAgt>
+        <Dbtr><Nm>${tx.debtorName}</Nm></Dbtr>
+        <DbtrAcct><Id><IBAN>${tx.debtorIban}</IBAN></Id></DbtrAcct>
+        ${tx.remittance ? `<RmtInf><Ustrd>${tx.remittance}</Ustrd></RmtInf>` : ''}
+      </DrctDbtTxInf>`,
+        )
+        .join('')}
+    </PmtInf>`,
+    )
+    .join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.001.08">
+  <CstmrDrctDbtInitn>
+    <GrpHdr><MsgId>${options.msgId}</MsgId><CreDtTm>${new Date().toISOString().slice(0, 19)}</CreDtTm><NbOfTxs>${allTx.length}</NbOfTxs><CtrlSum>${sum(allTx)}</CtrlSum><InitgPty><Nm>Test</Nm></InitgPty></GrpHdr>
+    ${pmtInfs}
+  </CstmrDrctDbtInitn>
+</Document>`;
+}

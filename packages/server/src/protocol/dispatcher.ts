@@ -25,12 +25,19 @@ import { handleHcs } from '../handlers/hcs.js';
 import { decryptUpload } from './upload-pipeline.js';
 import { logError } from '../logger.js';
 import { createZip } from './zip.js';
+import { validatePayload } from './xml-validator.js';
 import type { DownloadOrderData, DownloadPayload } from '../handlers/handler-types.js';
-import { recordUploadCompleted, recordUploadRejected } from '../banking/order-events.js';
+import { OrderRejection } from '../handlers/handler-types.js';
+import { recordEvent, recordUploadCompleted, recordUploadRejected } from '../banking/order-events.js';
+import { handleHvd, handleHvt, handleHvz, processVeuSignature } from '../handlers/veu.js';
+import { handlePtk } from '../handlers/ptk.js';
+import { hacDeniedPartners, hacDownloadEvents } from '../config/feature-flags.js';
 
 export interface DispatcherConfig {
   hostId: string;
   store: AppStore;
+  /** Validate generated camt / pain.002 documents against their ISO 20022 schemas (violations are logged) */
+  validatePayloads?: boolean;
 }
 
 export type DownloadOrderHandler = (
@@ -208,6 +215,19 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     return handleSpr(ctx, subscriber, hostConfig, store);
   }
 
+  // VEU signature and cancellation carry only signature data (NumSegments 0) and are processed at once
+  if (orderType === 'HVE' || orderType === 'HVS') {
+    return processVeuSignature(ctx, store, subscriber, hostConfig, orderType);
+  }
+
+  if ((orderType === 'HAC' || orderType === 'PTK') && hacDeniedPartners().includes(partnerId)) {
+    return buildEbicsResponse({
+      technicalCode: ReturnCode.EBICS_OK,
+      businessCode: ReturnCode.EBICS_AUTHORISATION_ORDER_TYPE_FAILED,
+      transactionPhase: 'Initialisation',
+    });
+  }
+
   // Upload detection: NumSegments in request static header = upload
   const numSegmentsStr = xpathString('//ebics:header/ebics:static/ebics:NumSegments/text()', ctx.doc);
   if (numSegmentsStr) {
@@ -220,6 +240,10 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     HKD: handleHkd,
     HAA: handleHaa,
     HAC: handleHac,
+    PTK: handlePtk,
+    HVZ: handleHvz,
+    HVD: handleHvd,
+    HVT: handleHvt,
     BTD: handleBtd,
   };
 
@@ -228,7 +252,19 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     return errorResponse(ReturnCode.EBICS_UNSUPPORTED_ORDER_TYPE);
   }
 
-  const orderData = handler(ctx, subscriber, hostConfig, store);
+  let orderData: DownloadOrderData;
+  try {
+    orderData = handler(ctx, subscriber, hostConfig, store);
+  } catch (err) {
+    if (err instanceof OrderRejection) {
+      return buildEbicsResponse({
+        technicalCode: ReturnCode.EBICS_OK,
+        businessCode: err.returnCode,
+        transactionPhase: 'Initialisation',
+      });
+    }
+    throw err;
+  }
   if (orderData === null) {
     return buildEbicsResponse({
       technicalCode: ReturnCode.EBICS_OK,
@@ -239,6 +275,38 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
 
   if (!subscriber.keys.encryptionCertificate) {
     return errorResponse(ReturnCode.EBICS_INVALID_USER_STATE);
+  }
+
+  if (config.validatePayloads) {
+    const documents = typeof orderData === 'string' ? [orderData] : orderData.documents.map((d) => d.content);
+    for (const document of documents) {
+      if (typeof document !== 'string') continue;
+      try {
+        validatePayload(document);
+      } catch (err) {
+        logError(`${orderType} payload XSD validation (server bug)`, err);
+      }
+    }
+  }
+
+  if (hacDownloadEvents() && orderType !== 'HAC' && orderType !== 'PTK') {
+    const service = (name: string) => xpathString(`//ebics:BTDOrderParams/ebics:Service/ebics:${name}/text()`, ctx.doc);
+    recordEvent(
+      store,
+      {
+        partnerId,
+        userId,
+        orderId: store.nextOrderId(partnerId),
+        adminOrderType: orderType,
+        serviceName: service('ServiceName'),
+        scope: service('Scope'),
+        serviceOption: service('ServiceOption'),
+        containerType: xpathString('//ebics:BTDOrderParams/ebics:Service/ebics:Container/@containerType', ctx.doc),
+        msgName: service('MsgName'),
+      },
+      'FILE_DOWNLOAD',
+      { reasonCode: 'TS01' },
+    );
   }
 
   const subscriberEncPubKey = extractPublicKeyFromCertBase64(subscriber.keys.encryptionCertificate);
@@ -572,10 +640,15 @@ function packDownload(
     return { data: createZip([{ name: `${msgName}.${extension}`, content: orderData }]) };
   }
 
+  const contents = orderData.documents.map((d) => d.content);
   return {
     data: containerType === 'ZIP'
       ? createZip(orderData.documents)
-      : orderData.documents.map((d) => d.content).join('\n'),
+      : contents.length === 1
+        ? contents[0]!
+        : contents.every((c) => typeof c === 'string')
+          ? contents.join('\n')
+          : Buffer.concat(contents.map((c) => (typeof c === 'string' ? Buffer.from(`${c}\n`) : c))),
     deliveryKind: orderData.deliveryKind,
     deliveryKeys: orderData.deliveryKeys,
   };

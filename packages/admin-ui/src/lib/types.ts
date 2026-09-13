@@ -174,6 +174,10 @@ export interface PaymentOrder {
   debtorName?: string;
   debtorIban?: string;
   requestedEds: boolean;
+  /** Distinct users whose signatures release the order (2 with EDS hold, else 1) */
+  signaturesRequired: number;
+  /** Held until a signature confirms a VoP result other than RCVC */
+  vopConfirmationRequired: boolean;
   status: PaymentOrderStatus;
   vopGroupStatus: VopStatus;
   totalCents: number;
@@ -235,7 +239,7 @@ export interface HacEventInput {
   additionalInfo?: string[];
 }
 
-export type DeliveryKind = 'camt.054' | 'psr' | 'vop' | 'hac';
+export type DeliveryKind = 'camt.054' | 'psr' | 'vop' | 'hac' | 'ptk';
 
 export interface ServerFlags {
   hacFormat: 'legacy' | 'pain.002';
@@ -243,4 +247,88 @@ export interface ServerFlags {
   vopDefault: VopStatus;
   strictValidation: boolean;
   allowPreActivation: boolean;
+  hacDownloadEvents: boolean;
+  hacDeniedPartners: string[];
+  vopConfirmation: boolean;
+  wssOneTimeTokens: boolean;
+}
+
+// VEU (distributed electronic signature)
+
+export interface OrderSignature {
+  id: number;
+  partnerId: string;
+  orderId: string;
+  userId: string;
+  kind: 'UPLOAD' | 'HVE';
+  signedAt: string;
+}
+
+export interface VeuOrder {
+  partnerId: string;
+  orderId: string;
+  paymentOrderIds: number[];
+  serviceName: string;
+  serviceOption?: string;
+  msgName: string;
+  msgId: string;
+  originatorUserId: string;
+  createdAt: string;
+  debtorName?: string;
+  debtorIban?: string;
+  totalCents: number;
+  currency: string;
+  vopGroupStatus: VopStatus;
+  transactions: PaymentTransaction[];
+  signatures: OrderSignature[];
+  /** distinct signing users */
+  signaturesDone: number;
+  /** distinct users needed */
+  signaturesRequired: number;
+  /** what HVZ reports (one more while a VoP confirmation is pending) */
+  numSigRequired: number;
+  vopConfirmationRequired: boolean;
+  vopConfirmed: boolean;
+  releasable: boolean;
+  dataDigest: string;
+}
+
+// Real-time notifications
+
+export interface WssParameters {
+  URL: string;
+  TOKEN: string;
+  /** Y = one-time token, N = reusable until VALIDITY */
+  OTT: 'Y' | 'N';
+  VALIDITY: string;
+  PARTNERID: string;
+  USERID?: string;
+}
+
+export interface RealtimeConnection {
+  id: string;
+  partnerId: string;
+  userId?: string;
+  connectedAt: string;
+}
+
+export interface BtfNotification {
+  SERVICE: string;
+  SCOPE?: string;
+  OPTION?: string;
+  CONTTYPE?: string;
+  MSGNAME: string;
+}
+
+// Seeded download data
+
+export interface DownloadData {
+  id: number;
+  serviceName: string;
+  serviceOption?: string;
+  msgName?: string;
+  content: string;
+  contentType: string;
+  /** SQLite datetime without zone (UTC) */
+  createdAt: string;
 }

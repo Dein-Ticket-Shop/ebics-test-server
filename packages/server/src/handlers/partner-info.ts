@@ -30,6 +30,13 @@ export const SUPPORTED_ORDER_TYPES: OrderTypeInfo[] = [
   { adminType: 'HKD', description: 'Download customer data' },
   { adminType: 'HAA', description: 'Download available order types' },
   { adminType: 'HAC', description: 'Download customer acknowledgement' },
+  { adminType: 'PTK', description: 'Download customer protocol (text)' },
+  // Distributed electronic signature (VEU)
+  { adminType: 'HVZ', description: 'VEU overview with order details' },
+  { adminType: 'HVD', description: 'VEU state of an order' },
+  { adminType: 'HVT', description: 'VEU transaction details' },
+  { adminType: 'HVE', description: 'VEU signature' },
+  { adminType: 'HVS', description: 'VEU cancellation' },
   // Administrative uploads / key management
   { adminType: 'PUB', description: 'Send signature public key' },
   { adminType: 'HCA', description: 'Send authentication & encryption public keys' },
@@ -49,6 +56,7 @@ export const SUPPORTED_ORDER_TYPES: OrderTypeInfo[] = [
   { adminType: 'BTD', service: { serviceName: 'STM', scope: 'DE', serviceOption: 'SCI', msgName: 'camt.054' }, description: 'Debit/credit notification (camt.054)' },
   { adminType: 'BTD', service: { serviceName: 'REP', scope: 'DE', serviceOption: 'SCI', msgName: 'pain.002' }, description: 'Payment status report (pain.002)' },
   { adminType: 'BTD', service: { serviceName: 'REP', scope: 'DE', serviceOption: 'VOP', msgName: 'pain.002' }, description: 'Verification of Payee report (pain.002)' },
+  { adminType: 'BTD', service: { serviceName: 'OTH', scope: 'DE', msgName: 'wssparam' }, description: 'Real-time notification connection parameters' },
 ];
 
 /** Maps a subscriber lifecycle state to the EBICS UserStatusType integer. */

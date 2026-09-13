@@ -149,14 +149,21 @@
 - [x] Admin UI: payment orders list and detail, customer protocol page, camt.052/camt.054 statement preview
 - [x] Tests: ZIP, order ledger store + migrations, VoP, report generators, payments/reports/HAC integration
 
+## Phase 8: VEU, PTK, real-time notifications and payload validation
+
+- [x] VEU orders HVZ, HVD, HVT, HVE, HVS: under EDS hold (`EBICS_EDS_HOLD=true`) a second distinct user must sign (the upload's signature counts as the first), duplicate HVE by the same user → `091306`, HVS cancels; bank-side `/api/veu/orders` and admin UI page "VEU"
+- [x] VoP confirmation (`EBICS_VOP_CONFIRMATION=true`): credit transfers whose VoP group result is not RCVC wait for an HVE signature (the uploader may confirm) or an admin release
+- [x] PTK customer protocol as ISO-8859-1 text rendered from the HAC event ledger, delivered once without DateRange; admin preview `GET /api/ptk/report`
+- [x] HAC/PTK deny list (`EBICS_HAC_DENY_PARTNERS=PARTNER1,PARTNER2`) → `090003`
+- [x] FILE_DOWNLOAD HAC events (`EBICS_HAC_DOWNLOAD_EVENTS=true`): every download except HAC/PTK gets its own OrderID and the BTF attributes
+- [x] Protocol text for pain.008 ORDER_HAC_FINAL_POS (`L A S T S C H R I F T E N` with `Sammlerreferenz`)
+- [x] Download data keyed by ServiceOption (exact option wins over an entry without one, old tables rebuilt on startup), `DELETE /api/download-data/:id`, admin UI page "Download Data"
+- [x] Real-time notifications (DK Anlage 2 V1.0): BTD OTH/DE/wssparam, WebSocket `/realtime`, batched EBICS-HAA and INFO messages, one-time tokens with `EBICS_WSS_ONE_TIME_TOKEN=true`; `/api/realtime/*` and admin UI page "Real-time"
+- [x] XSD validation of generated camt.052/053/054.001.08 and pain.002.001.03/.10 payloads against `schemas/ISO20022` (violations logged as server bugs), camt.053 statement Id fits Max35Text
+
 ### Not yet supported (TODO)
 
-- [ ] PTK (customer protocol as text)
-- [ ] EDS admin orders HVZ / HVD / HVT / HVS / HVE (VEU overview, details, sign, cancel via EBICS — only the admin API can release or cancel today)
-- [ ] OTH + WebSocket real-time notifications
-- [ ] FILE_DOWNLOAD HAC events for downloads
-- [ ] Protocol text for pain.008 ORDER_HAC_FINAL_POS
-- [ ] Static download data keyed by ServiceOption (`download_data` is unique on service + msg name)
-- [ ] VoP confirmation workflow for no-match results (orders are executed regardless of the VoP result)
-- [ ] HAC `090003` deny list (subscriber not authorised for HAC)
-- [ ] XSD validation of pain.002 / camt payloads
+- [ ] HVU (VEU overview without order details)
+- [ ] HVT order details without `completeOrderData="true"` (answered with `091112`)
+- [ ] Cryptographic verification of electronic signatures (uploads, HVE and HVS signatures are parsed only)
+- [ ] Replay of real-time messages for clients that were not connected

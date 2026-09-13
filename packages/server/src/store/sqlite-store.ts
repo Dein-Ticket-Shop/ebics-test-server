@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,8 @@ import type {
   NewHacEvent,
   NewPaymentOrder,
   NewPaymentTransaction,
+  OrderSignature,
+  OrderSignatureKind,
   PaymentOrder,
   PaymentOrderStatus,
   PaymentStatusCode,
@@ -23,6 +26,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 export class SqliteStore implements AppStore {
   private db: Database.Database;
+  readonly events = new EventEmitter();
 
   constructor(dbPath: string = ':memory:') {
     this.db = new Database(dbPath);
@@ -42,6 +46,38 @@ export class SqliteStore implements AppStore {
     this.ensureColumn('transactions', 'delivery_kind', 'TEXT');
     this.ensureColumn('transactions', 'delivery_keys', 'TEXT');
     this.ensureColumn('uploaded_orders', 'order_id', 'TEXT');
+    this.ensureColumn('payment_orders', 'signatures_required', 'INTEGER NOT NULL DEFAULT 1');
+    this.ensureColumn('payment_orders', 'vop_confirmation_required', 'INTEGER NOT NULL DEFAULT 0');
+    this.migrateDownloadDataServiceOption();
+  }
+
+  /** download_data used to be UNIQUE(service_name, msg_name); rebuild it with the optional service_option */
+  private migrateDownloadDataServiceOption(): void {
+    const table = this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'download_data'").get() as { sql: string };
+    if (!table.sql.includes('service_option')) {
+      this.db.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE download_data_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            service_name TEXT NOT NULL,
+            service_option TEXT,
+            msg_name TEXT,
+            content TEXT NOT NULL,
+            content_type TEXT NOT NULL DEFAULT 'text',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          )
+        `);
+        this.db.exec(`
+          INSERT INTO download_data_new (id, service_name, msg_name, content, content_type, created_at)
+          SELECT id, service_name, msg_name, content, content_type, created_at FROM download_data
+        `);
+        this.db.exec('DROP TABLE download_data');
+        this.db.exec('ALTER TABLE download_data_new RENAME TO download_data');
+      })();
+    }
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_download_data_service ON download_data(service_name, COALESCE(service_option, ''), COALESCE(msg_name, ''))",
+    );
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -274,40 +310,50 @@ export class SqliteStore implements AppStore {
     ).run(JSON.stringify(segments), segments.length, transactionId);
   }
 
-  upsertDownloadData(serviceName: string, msgName: string | undefined, content: string, contentType: string): void {
+  upsertDownloadData(serviceName: string, msgName: string | undefined, content: string, contentType: string, serviceOption?: string): void {
+    const existing = this.db.prepare(`
+      SELECT id FROM download_data
+      WHERE service_name = ? AND COALESCE(service_option, '') = COALESCE(?, '') AND COALESCE(msg_name, '') = COALESCE(?, '')
+    `).get(serviceName, serviceOption ?? null, msgName ?? null) as { id: number } | undefined;
+    if (existing) {
+      this.db.prepare('UPDATE download_data SET content = ?, content_type = ? WHERE id = ?').run(content, contentType, existing.id);
+      return;
+    }
     this.db.prepare(`
-      INSERT INTO download_data (service_name, msg_name, content, content_type)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(service_name, msg_name) DO UPDATE SET content = excluded.content, content_type = excluded.content_type
-    `).run(serviceName, msgName ?? null, content, contentType);
+      INSERT INTO download_data (service_name, service_option, msg_name, content, content_type) VALUES (?, ?, ?, ?, ?)
+    `).run(serviceName, serviceOption ?? null, msgName ?? null, content, contentType);
   }
 
-  getDownloadData(serviceName: string, msgName?: string): DownloadData | undefined {
-    const row = msgName
-      ? this.db.prepare('SELECT * FROM download_data WHERE service_name = ? AND msg_name = ?').get(serviceName, msgName)
-      : this.db.prepare('SELECT * FROM download_data WHERE service_name = ? AND msg_name IS NULL').get(serviceName);
-    if (!row) return undefined;
-    const r = row as Record<string, string | number | null>;
+  /** Seeded data for a BTF: an entry for exactly this ServiceOption wins over one without an option */
+  getDownloadData(serviceName: string, msgName?: string, serviceOption?: string): DownloadData | undefined {
+    const row = this.db.prepare(`
+      SELECT * FROM download_data
+      WHERE service_name = ? AND COALESCE(msg_name, '') = COALESCE(?, '') AND (service_option IS NULL OR service_option = ?)
+      ORDER BY service_option IS NULL
+      LIMIT 1
+    `).get(serviceName, msgName ?? null, serviceOption ?? null) as Row | undefined;
+    return row ? this.rowToDownloadData(row) : undefined;
+  }
+
+  listDownloadData(): DownloadData[] {
+    const rows = this.db.prepare('SELECT * FROM download_data ORDER BY id').all() as Row[];
+    return rows.map((r) => this.rowToDownloadData(r));
+  }
+
+  deleteDownloadData(id: number): void {
+    this.db.prepare('DELETE FROM download_data WHERE id = ?').run(id);
+  }
+
+  private rowToDownloadData(r: Row): DownloadData {
     return {
       id: r['id'] as number,
       serviceName: r['service_name'] as string,
+      serviceOption: (r['service_option'] as string) ?? undefined,
       msgName: (r['msg_name'] as string) ?? undefined,
       content: r['content'] as string,
       contentType: r['content_type'] as string,
       createdAt: r['created_at'] as string,
     };
-  }
-
-  listDownloadData(): DownloadData[] {
-    const rows = this.db.prepare('SELECT * FROM download_data ORDER BY id').all() as Record<string, string | number | null>[];
-    return rows.map((r) => ({
-      id: r['id'] as number,
-      serviceName: r['service_name'] as string,
-      msgName: (r['msg_name'] as string) ?? undefined,
-      content: r['content'] as string,
-      contentType: r['content_type'] as string,
-      createdAt: r['created_at'] as string,
-    }));
   }
 
   createUploadedOrder(data: Omit<UploadedOrder, 'id' | 'processed' | 'createdAt' | 'orderId'> & { orderId?: string }): UploadedOrder {
@@ -348,6 +394,7 @@ export class SqliteStore implements AppStore {
   }
 
   reset(): void {
+    this.db.exec('DELETE FROM payment_order_signatures');
     this.db.exec('DELETE FROM payment_status_events');
     this.db.exec('DELETE FROM payment_transactions');
     this.db.exec('DELETE FROM payment_orders');
@@ -512,7 +559,7 @@ export class SqliteStore implements AppStore {
   }
 
   createBooking(data: Omit<Booking, 'id' | 'createdAt'>): Booking {
-    return this.db.transaction(() => {
+    const booking = this.db.transaction(() => {
       const result = this.db.prepare(`
         INSERT INTO bookings (account_id, amount_cents, currency, value_date, booking_date,
           counterparty_name, counterparty_iban, counterparty_bic,
@@ -531,6 +578,8 @@ export class SqliteStore implements AppStore {
 
       return this.getBooking(Number(result.lastInsertRowid))!;
     })();
+    this.events.emit('booking', booking);
+    return booking;
   }
 
   deleteBooking(id: number): void {
@@ -668,7 +717,7 @@ export class SqliteStore implements AppStore {
   // HAC event ledger
 
   appendHacEvent(event: NewHacEvent): HacEvent {
-    return this.db.transaction(() => {
+    const appended = this.db.transaction(() => {
       // Strictly increasing per partner: clients use the TimeStamp attribute as idempotency key
       const last = this.db.prepare('SELECT MAX(event_at) AS last FROM hac_events WHERE partner_id = ?').get(event.partnerId) as { last: string | null };
       let eventAt = event.eventAt ?? new Date().toISOString();
@@ -687,6 +736,8 @@ export class SqliteStore implements AppStore {
       );
       return this.getHacEvent(Number(result.lastInsertRowid))!;
     })();
+    this.events.emit('hacEvent', appended);
+    return appended;
   }
 
   getHacEvent(id: number): HacEvent | undefined {
@@ -730,15 +781,15 @@ export class SqliteStore implements AppStore {
   // Credit transfer orders
 
   createPaymentOrder(order: NewPaymentOrder, transactions: NewPaymentTransaction[]): PaymentOrder {
-    return this.db.transaction(() => {
+    const created = this.db.transaction(() => {
       const result = this.db.prepare(`
         INSERT INTO payment_orders (order_id, uploaded_order_id, partner_id, user_id, service_name, service_option, msg_name,
-          msg_id, pmt_inf_id, debtor_name, debtor_iban, requested_eds, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          msg_id, pmt_inf_id, debtor_name, debtor_iban, requested_eds, signatures_required, vop_confirmation_required, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         order.orderId, order.uploadedOrderId ?? null, order.partnerId, order.userId, order.serviceName,
         order.serviceOption ?? null, order.msgName, order.msgId, order.pmtInfId, order.debtorName ?? null,
-        order.debtorIban ?? null, order.requestedEds ? 1 : 0, order.status,
+        order.debtorIban ?? null, order.requestedEds ? 1 : 0, order.signaturesRequired ?? 1, order.vopConfirmationRequired ? 1 : 0, order.status,
       );
       const id = Number(result.lastInsertRowid);
       const insertTx = this.db.prepare(`
@@ -755,6 +806,8 @@ export class SqliteStore implements AppStore {
       }
       return this.getPaymentOrder(id)!;
     })();
+    this.events.emit('paymentOrder', created);
+    return created;
   }
 
   getPaymentOrder(id: number): PaymentOrder | undefined {
@@ -819,7 +872,35 @@ export class SqliteStore implements AppStore {
       INSERT INTO payment_status_events (payment_order_id, status, reason_code, additional_info) VALUES (?, ?, ?, ?)
     `).run(event.paymentOrderId, event.status, event.reasonCode ?? null, JSON.stringify(event.additionalInfo ?? []));
     const row = this.db.prepare('SELECT * FROM payment_status_events WHERE id = ?').get(Number(result.lastInsertRowid)) as Row;
-    return this.rowToPaymentStatusEvent(row);
+    const appended = this.rowToPaymentStatusEvent(row);
+    this.events.emit('paymentStatus', appended);
+    return appended;
+  }
+
+  // VEU signatures
+
+  addOrderSignature(signature: { partnerId: string; orderId: string; userId: string; kind: OrderSignatureKind }): OrderSignature {
+    const result = this.db.prepare(`
+      INSERT INTO payment_order_signatures (partner_id, order_id, user_id, kind) VALUES (?, ?, ?, ?)
+    `).run(signature.partnerId, signature.orderId, signature.userId, signature.kind);
+    const row = this.db.prepare('SELECT * FROM payment_order_signatures WHERE id = ?').get(Number(result.lastInsertRowid)) as Row;
+    return this.rowToOrderSignature(row);
+  }
+
+  listOrderSignatures(partnerId: string, orderId: string): OrderSignature[] {
+    const rows = this.db.prepare('SELECT * FROM payment_order_signatures WHERE partner_id = ? AND order_id = ? ORDER BY id').all(partnerId, orderId) as Row[];
+    return rows.map((r) => this.rowToOrderSignature(r));
+  }
+
+  private rowToOrderSignature(row: Row): OrderSignature {
+    return {
+      id: row['id'] as number,
+      partnerId: row['partner_id'] as string,
+      orderId: row['order_id'] as string,
+      userId: row['user_id'] as string,
+      kind: row['kind'] as OrderSignatureKind,
+      signedAt: row['signed_at'] as string,
+    };
   }
 
   listPaymentStatusEvents(filter: { paymentOrderId?: number; partnerId?: string } & DateFilter = {}): PaymentStatusEvent[] {
@@ -848,6 +929,8 @@ export class SqliteStore implements AppStore {
       debtorName: (row['debtor_name'] as string) ?? undefined,
       debtorIban: (row['debtor_iban'] as string) ?? undefined,
       requestedEds: row['requested_eds'] === 1,
+      signaturesRequired: row['signatures_required'] as number,
+      vopConfirmationRequired: row['vop_confirmation_required'] === 1,
       status: row['status'] as PaymentOrderStatus,
       createdAt: row['created_at'] as string,
       updatedAt: row['updated_at'] as string,

@@ -22,11 +22,12 @@ import {
   vopGroupStatus,
 } from '../banking/generators/pain002.js';
 import { partnerDisplayName } from '../handlers/hac.js';
+import { generateCustomerProtocolText } from '../banking/generators/ptk.js';
 
 const ORDER_STATUSES: PaymentOrderStatus[] = ['PENDING_EDS', 'EXECUTED', 'CANCELLED', 'REJECTED'];
 const STATUS_CODES: PaymentStatusCode[] = ['ACTC', 'ACCP', 'ACSP', 'ACSC', 'ACWC', 'RJCT'];
 const VOP_STATUSES: VopStatus[] = ['RCVC', 'RVMC', 'RVNM', 'RVNA'];
-const DELIVERY_KINDS: DeliveryKind[] = ['camt.054', 'psr', 'vop', 'hac'];
+const DELIVERY_KINDS: DeliveryKind[] = ['camt.054', 'psr', 'vop', 'hac', 'ptk'];
 
 function xml(c: Context, content: string) {
   return c.body(content, 200, { 'Content-Type': 'application/xml; charset=utf-8' });
@@ -199,6 +200,17 @@ export function createPaymentsAdminRoute(store: AppStore) {
         customerName: (id) => partnerDisplayName(store, id),
       }),
     );
+  });
+
+  app.get('/ptk/report', (c) => {
+    const partnerId = c.req.query('partnerId');
+    if (!partnerId) return c.json({ error: 'partnerId is required' }, 400);
+    const text = generateCustomerProtocolText(store.listHacEvents({ partnerId }), {
+      hostId: store.getHostConfig()?.hostId ?? '',
+      partnerId,
+      customerName: partnerDisplayName(store, partnerId),
+    });
+    return c.body(text, 200, { 'Content-Type': 'text/plain; charset=utf-8' });
   });
 
   app.post('/deliveries/reset', async (c) => {

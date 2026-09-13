@@ -11,20 +11,27 @@ inspect every request and response.
 
 - EBICS H005 protocol over a single `/ebics` endpoint
 - Key exchange: INI, HIA, HPB, plus key management (HCA, HCS, PUB, SPR)
-- Order info downloads: HEV, HPD, HKD, HTD, HAA, HAC
+- Order info downloads: HEV, HPD, HKD, HTD, HAA, HAC, PTK
 - Generic upload and download: BTU and BTD with BTF service parameters
 - Payment processing: parses pain.001 credit transfers and pain.008 direct debits
 - SEPA Instant uploads (BTU SCI pain.001) as payment orders with Verification of Payee and a payment status history
-- Optional EDS hold: uploads that request a distributed signature wait in the VEU until an admin releases, cancels or rejects them
+- Optional EDS hold: uploads that request a distributed signature wait in the VEU until a second user signs or an admin releases, cancels or rejects them
+- VEU order types HVZ, HVD, HVT, HVE and HVS to list, inspect, sign and cancel held orders (signatures are parsed, not cryptographically verified)
+- Optional VoP confirmation: credit transfers without a full payee match (RCVC) wait for an HVE signature or an admin release
 - EBICS OrderIDs on uploads and INI/HIA, echoed in every response of the transaction
 - Statement generation: camt.053 and MT940
 - Reports: camt.052 intraday reports, camt.054 notifications, pain.002 payment status reports and pain.002 Verification of Payee reports
 - ZIP containers for BTD downloads when the client requests `Container containerType="ZIP"`
 - Delivery tracking: downloads without a DateRange return only data not yet fetched, confirmed by a positive receipt
-- HAC customer protocol in pain.002.001.03 format (opt-in), fed by an event ledger of the bank-side order lifecycle
+- HAC customer protocol in pain.002.001.03 format (opt-in), fed by an event ledger of the bank-side order lifecycle, with German protocol text for credit transfers and direct debits
+- PTK customer protocol as ISO-8859-1 text, rendered from the same event ledger
+- Optional `FILE_DOWNLOAD` events in the customer protocol, and a partner deny list for HAC and PTK (`090003`)
+- Seeded download data per service, message name and ServiceOption
+- Real-time notifications (DK Anlage 2 V1.0): BTD OTH/DE/wssparam returns a token, the `/realtime` WebSocket pushes EBICS-HAA messages for new bookings, payment status, payment orders and HAC events to connected clients
 - XML signing and schema validation on both requests and responses
+- XSD validation of generated camt.052/053/054 and pain.002 payloads; violations are logged as server bugs and the download still goes out
 - SQLite storage that survives restarts
-- Admin UI for subscribers, banking data, and a full protocol log
+- Admin UI for subscribers, banking data, payment orders, the VEU, real-time connections, seeded download data, and a full protocol log
 
 ## Requirements
 
@@ -43,6 +50,7 @@ The server starts on http://localhost:4150.
 - EBICS endpoint: `POST http://localhost:4150/ebics`
 - Health check: `GET http://localhost:4150/health`
 - Admin API: `http://localhost:4150/api`
+- Real-time notifications: `ws://localhost:4150/realtime` (HTTP Basic `PARTNERID_USERID:TOKEN`, token from BTD OTH/DE/wssparam)
 
 ### Admin UI
 
@@ -54,6 +62,11 @@ pnpm dev
 ```
 
 Then open http://localhost:4150/admin.
+
+Next to subscribers and banking data, the UI has pages for payment orders, the customer protocol, the
+VEU (sign or cancel held orders as a chosen user), Real-time (open connections, tokens, test messages)
+and Download Data (seed files per service, message name and ServiceOption). Host Config shows the
+active server flags.
 
 To develop the UI with hot reload, run it separately:
 
@@ -100,8 +113,12 @@ All settings are read from the environment:
 | `EBICS_ALLOW_PREACTIVATION`| `false`          | Allow HPB before the subscriber is activated |
 | `EBICS_STRICT_VALIDATION`  | `true`           | Reject uploads with malformed IBAN or BIC (returns `090004`); set `false` to relax |
 | `EBICS_HAC_FORMAT`         | `legacy`         | HAC order data format; `pain.002` returns the pain.002.001.03 customer protocol real banks send |
-| `EBICS_EDS_HOLD`           | `false`          | Hold uploads with `requestEDS="true"` in the VEU until released via the admin API or UI |
+| `EBICS_EDS_HOLD`           | `false`          | Hold uploads with `requestEDS="true"` in the VEU until a second user signs (HVE) or an admin releases them |
 | `EBICS_VOP_DEFAULT`        | `RCVC`           | VoP result for creditors not held at this bank (`RCVC`, `RVMC`, `RVNM`, `RVNA`) |
+| `EBICS_VOP_CONFIRMATION`   | `false`          | Hold credit transfers whose VoP group result is not `RCVC` until an HVE signature or an admin release |
+| `EBICS_HAC_DOWNLOAD_EVENTS`| `false`          | Add a `FILE_DOWNLOAD` event to the customer protocol for every download except HAC and PTK |
+| `EBICS_HAC_DENY_PARTNERS`  | unset            | Comma-separated partner IDs whose HAC and PTK downloads are answered with `090003` |
+| `EBICS_WSS_ONE_TIME_TOKEN` | `false`          | wssparam tokens open one WebSocket connection (`OTT` `Y`); by default a token can reconnect for one hour |
 | `EBICS_LOG_LEVEL`          | `info`           | Log level (`trace`..`fatal`, or `silent`)    |
 | `EBICS_QUIET`              | `false`          | Shorthand for `silent` logging               |
 | `EBICS_LOG_JSON`           | unset            | Force raw JSON logs (no pretty printing)      |

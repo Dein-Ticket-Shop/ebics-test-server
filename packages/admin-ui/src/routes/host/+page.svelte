@@ -3,13 +3,29 @@
   import KeyCard from '$lib/components/KeyCard.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { configureHost } from '$lib/api.js';
-  import type { HostConfig } from '$lib/types.js';
+  import type { HostConfig, ServerFlags } from '$lib/types.js';
 
   interface Props {
-    data: { host: HostConfig | null };
+    data: { host: HostConfig | null; flags: ServerFlags | null };
   }
 
   let { data }: Props = $props();
+
+  const flagRows = $derived(
+    data.flags
+      ? [
+          { env: 'EBICS_HAC_FORMAT', label: 'HAC format', value: data.flags.hacFormat },
+          { env: 'EBICS_EDS_HOLD', label: 'Hold EDS uploads in the VEU', value: data.flags.edsHold },
+          { env: 'EBICS_VOP_DEFAULT', label: 'VoP result for other banks', value: data.flags.vopDefault },
+          { env: 'EBICS_STRICT_VALIDATION', label: 'Strict IBAN/BIC and account validation', value: data.flags.strictValidation },
+          { env: 'EBICS_ALLOW_PREACTIVATION', label: 'HPB before activation', value: data.flags.allowPreActivation },
+          { env: 'EBICS_HAC_DOWNLOAD_EVENTS', label: 'FILE_DOWNLOAD events in HAC', value: data.flags.hacDownloadEvents },
+          { env: 'EBICS_HAC_DENY_PARTNERS', label: 'Partners denied HAC/PTK', value: data.flags.hacDeniedPartners.join(', ') || '-' },
+          { env: 'EBICS_VOP_CONFIRMATION', label: 'Hold orders until VoP is confirmed', value: data.flags.vopConfirmation },
+          { env: 'EBICS_WSS_ONE_TIME_TOKEN', label: 'One-time WebSocket tokens', value: data.flags.wssOneTimeTokens },
+        ]
+      : [],
+  );
 
   let showReconfigure = $state(false);
   let newHostId = $state('');
@@ -84,4 +100,35 @@
       certificate={data.host.bankKeys.encryptionCertificate}
     />
   </div>
+{/if}
+
+{#if data.flags}
+  <h2 class="text-lg font-semibold mt-8 mb-4">Server flags</h2>
+  <div class="overflow-x-auto bg-base-200 rounded-xl">
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>Setting</th>
+          <th>Environment variable</th>
+          <th>Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each flagRows as row (row.env)}
+          <tr>
+            <td class="text-sm">{row.label}</td>
+            <td class="font-mono text-xs">{row.env}</td>
+            <td>
+              {#if typeof row.value === 'boolean'}
+                <span class="badge badge-sm {row.value ? 'badge-success' : 'badge-ghost'}">{row.value ? 'on' : 'off'}</span>
+              {:else}
+                <span class="font-mono text-sm">{row.value}</span>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
+  <p class="text-xs text-base-content/40 mt-2">Flags are read from the server environment and cannot be changed here.</p>
 {/if}

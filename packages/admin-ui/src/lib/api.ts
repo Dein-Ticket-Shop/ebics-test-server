@@ -17,6 +17,11 @@ import type {
   HacEvent,
   HacEventInput,
   DeliveryKind,
+  VeuOrder,
+  WssParameters,
+  RealtimeConnection,
+  BtfNotification,
+  DownloadData,
 } from './types.js';
 
 const API = '/api';
@@ -196,3 +201,49 @@ export const getHacReportUrl = (partnerId: string) => `${API}/hac/report?partner
 
 export const resetDeliveries = (data: { partnerId?: string; kind?: DeliveryKind } = {}) =>
   json<{ reset: number }>(`${API}/deliveries/reset`, { method: 'POST', body: JSON.stringify(data) });
+
+// VEU (bank-side signing and cancellation)
+
+const enc = encodeURIComponent;
+
+export const listVeuOrders = (partnerId?: string) =>
+  json<VeuOrder[]>(`${API}/veu/orders${partnerId ? `?partnerId=${enc(partnerId)}` : ''}`);
+export const getVeuOrder = (partnerId: string, orderId: string) =>
+  json<VeuOrder>(`${API}/veu/orders/${enc(partnerId)}/${enc(orderId)}`);
+export const signVeuOrder = (partnerId: string, orderId: string, userId: string) =>
+  json<{ orderId: string; released: boolean; order: VeuOrder | null }>(`${API}/veu/orders/${enc(partnerId)}/${enc(orderId)}/sign`, {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+export const cancelVeuOrder = (partnerId: string, orderId: string, data: { userId: string; additionalInfo?: string[] }) =>
+  json<{ orderId: string }>(`${API}/veu/orders/${enc(partnerId)}/${enc(orderId)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+
+// Real-time notifications
+
+export const listRealtimeConnections = () => json<RealtimeConnection[]>(`${API}/realtime/connections`);
+export const issueRealtimeToken = (data: { partnerId: string; userId?: string }) =>
+  json<WssParameters>(`${API}/realtime/tokens`, { method: 'POST', body: JSON.stringify(data) });
+export const notifyRealtime = (data: { partnerId: string; userId?: string; btf?: BtfNotification[]; orderTypes?: string[] }) =>
+  json<{ sent: number }>(`${API}/realtime/notify`, { method: 'POST', body: JSON.stringify(data) });
+export const broadcastRealtimeInfo = (data: { text: string; lang?: string }) =>
+  json<{ sent: number }>(`${API}/realtime/info`, { method: 'POST', body: JSON.stringify(data) });
+
+// Seeded download data
+
+export const listDownloadData = () => json<DownloadData[]>(`${API}/download-data`);
+export const upsertDownloadData = (data: {
+  serviceName: string;
+  serviceOption?: string;
+  msgName?: string;
+  content: string;
+  contentType?: 'text' | 'base64';
+}) => json<{ status: string; serviceName: string }>(`${API}/download-data`, { method: 'POST', body: JSON.stringify(data) });
+export const deleteDownloadData = (id: number) =>
+  json<{ status: string }>(`${API}/download-data/${id}`, { method: 'DELETE' });
+
+// Customer protocol as text (PTK)
+
+export const getPtkReportUrl = (partnerId: string) => `${API}/ptk/report?partnerId=${enc(partnerId)}`;

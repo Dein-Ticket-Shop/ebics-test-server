@@ -56,7 +56,7 @@ export function createEbicsRoute(config: EbicsRouteConfig) {
       }
     }
 
-    const ctx = { rawXml: rawBody, doc, hostId: '' };
+    const ctx = { rawXml: rawBody, doc, hostId: '', requestUrl: c.req.url };
     const result = await dispatch(ctx, config.dispatcher);
 
     if (validateResponses) {

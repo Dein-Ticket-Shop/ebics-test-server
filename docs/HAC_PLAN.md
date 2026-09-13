@@ -6,16 +6,24 @@ made-up format with the pain.002.001.03-format report that BIL, Spuerkeess and S
 so the luxfit `HacProcessingService` (and any other client) can be tested end-to-end: upload → OrderID →
 lifecycle events → FINAL_POS / FINAL_NEG.
 
-Deviations from the plan below:
+Deviations from the plan below (updated 2026-09-13):
 
-- No `FILE_DOWNLOAD` events for downloads.
+- `FILE_DOWNLOAD` events only with `EBICS_HAC_DOWNLOAD_EVENTS=true`. Every download except HAC and PTK
+  then gets its own OrderID and carries the BTF attributes of the request.
 - No dialect or language flags: one German, Sparkasse-style attribute set. `Scope` and `ContainerType`
   appear only when an event carries them.
-- No `090003` deny list.
+- The `090003` deny list is `EBICS_HAC_DENY_PARTNERS=comma,separated,partner,ids` and covers PTK too.
 - Admin routes are `GET/POST /api/hac-events`, `GET /api/hac/report?partnerId=` and
   `POST /api/payments/:id/release|cancel|reject` instead of `/api/uploaded-orders/:id/hac/final`.
-- Uploads that request EDS additionally produce `VEU_FORWARDING`, `VEU_VERIFICATION_END` and
-  `VEU_CANCEL_ORDER` events when `EBICS_EDS_HOLD=true`.
+  `GET /api/ptk/report?partnerId=` previews the text protocol.
+- Held uploads additionally produce `VEU_FORWARDING`, `VEU_VERIFICATION_END` and `VEU_CANCEL_ORDER`
+  events. Orders are held when they request EDS and `EBICS_EDS_HOLD=true`, or when
+  `EBICS_VOP_CONFIRMATION=true` and the VoP group result is not RCVC.
+- VEU signatures (HVE) produce `ES_UPLOAD` and `ES_VERIFICATION` under the HVE's own OrderID, with the BTU
+  order as reference. Cancellations (HVS, or the bank-side `/api/veu/orders` API) produce
+  `VEU_CANCEL_ORDER` under the HVS OrderID.
+- PTK renders the same ledger as ISO-8859-1 text. Without a DateRange it returns only entries not yet
+  fetched via PTK.
 
 ## 1. What real banks send (observed in luxfit prod, 5 active configs, 851 HAC pulls)
 

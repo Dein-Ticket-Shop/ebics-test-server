@@ -71,3 +71,21 @@ export function splitLines(text: string): string[] {
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
 }
+
+/** Readable message for a failed API call: the JSON `error` plus the EBICS return code when present. */
+export function apiErrorMessage(e: unknown, fallback: string): string {
+  const message = e instanceof Error ? e.message : String(e ?? '');
+  const match = message.match(/^API (\d+): ([\s\S]*)$/);
+  if (!match) return message || fallback;
+  try {
+    const body = JSON.parse(match[2]!) as { error?: string; returnCode?: string };
+    return [body.error ?? fallback, body.returnCode ? `(return code ${body.returnCode})` : ''].filter(Boolean).join(' ');
+  } catch {
+    return match[2] || fallback;
+  }
+}
+
+/** SQLite `datetime('now')` values are UTC without a zone. */
+export function formatSqliteDateTime(value: string): string {
+  return new Date(`${value.replace(' ', 'T')}Z`).toLocaleString('de-DE');
+}

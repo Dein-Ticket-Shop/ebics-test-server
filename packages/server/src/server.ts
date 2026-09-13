@@ -8,6 +8,7 @@ import { createAdminRoute } from './routes/admin.js';
 import type { AppStore } from './store/types.js';
 import { SqliteStore } from './store/sqlite-store.js';
 import { generateBankKeys } from './bank/bank-keys.js';
+import { RealtimeHub } from './realtime/notifications.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const ADMIN_BUILD = join(__dirname, '../../admin-ui/build');
@@ -20,10 +21,12 @@ export interface ServerConfig {
   validateResponses?: boolean;
 }
 
-export function createApp(config: ServerConfig) {
+/** App plus the store and real-time hub, so the entry point can attach WebSocket upgrades to the HTTP server */
+export function createServerApp(config: ServerConfig): { app: Hono; store: AppStore; realtime: RealtimeHub } {
   const app = new Hono();
 
   const store = config.store ?? new SqliteStore(config.dbPath);
+  const realtime = new RealtimeHub(store);
 
   if (!store.getHostConfig()) {
     const bankKeys = generateBankKeys(config.hostId);
@@ -31,13 +34,13 @@ export function createApp(config: ServerConfig) {
   }
 
   const ebicsConfig: EbicsRouteConfig = {
-    dispatcher: { hostId: config.hostId, store },
+    dispatcher: { hostId: config.hostId, store, validatePayloads: config.validateResponses ?? true },
     validateRequests: config.validateRequests ?? true,
     validateResponses: config.validateResponses ?? true,
   };
 
   app.route('/ebics', createEbicsRoute(ebicsConfig));
-  app.route('/api', createAdminRoute(store, config.hostId));
+  app.route('/api', createAdminRoute(store, config.hostId, realtime));
 
   app.get('/health', (c) => c.json({ status: 'ok' }));
 
@@ -56,5 +59,9 @@ export function createApp(config: ServerConfig) {
     });
   }
 
-  return app;
+  return { app, store, realtime };
+}
+
+export function createApp(config: ServerConfig) {
+  return createServerApp(config).app;
 }

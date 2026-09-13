@@ -50,14 +50,15 @@ CREATE TABLE IF NOT EXISTS transactions (
     expires_at TEXT NOT NULL
 );
 
+-- unique on (service_name, service_option, msg_name) via idx_download_data_service, created in SqliteStore.migrate()
 CREATE TABLE IF NOT EXISTS download_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     service_name TEXT NOT NULL,
+    service_option TEXT,
     msg_name TEXT,
     content TEXT NOT NULL,
     content_type TEXT NOT NULL DEFAULT 'text',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(service_name, msg_name)
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS bank_config (
@@ -195,6 +196,8 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     debtor_name TEXT,
     debtor_iban TEXT,
     requested_eds INTEGER NOT NULL DEFAULT 0,
+    signatures_required INTEGER NOT NULL DEFAULT 1,
+    vop_confirmation_required INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -234,3 +237,15 @@ CREATE TABLE IF NOT EXISTS deliveries (
     delivered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     PRIMARY KEY (partner_id, kind, item_key)
 );
+
+-- Electronic signatures per EBICS order (VEU): the upload's own signature and later HVE signatures
+CREATE TABLE IF NOT EXISTS payment_order_signatures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    partner_id TEXT NOT NULL,
+    order_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    signed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_order_signatures_order ON payment_order_signatures(partner_id, order_id, id);

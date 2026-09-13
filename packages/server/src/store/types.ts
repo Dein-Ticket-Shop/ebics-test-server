@@ -1,3 +1,5 @@
+import type { EventEmitter } from 'node:events';
+
 export enum SubscriberState {
   NEW = 'NEW',
   PARTIALLY_INITIALIZED_INI = 'PARTIALLY_INITIALIZED_INI',
@@ -113,6 +115,8 @@ export interface UploadedOrder {
 export interface DownloadData {
   id: number;
   serviceName: string;
+  /** Only served for this ServiceOption; undefined matches requests with any option */
+  serviceOption?: string;
   msgName?: string;
   content: string;
   contentType: string;
@@ -150,9 +154,10 @@ export interface EbicsStore {
 
   appendUploadSegment(transactionId: string, segment: string): void;
 
-  upsertDownloadData(serviceName: string, msgName: string | undefined, content: string, contentType: string): void;
-  getDownloadData(serviceName: string, msgName?: string): DownloadData | undefined;
+  upsertDownloadData(serviceName: string, msgName: string | undefined, content: string, contentType: string, serviceOption?: string): void;
+  getDownloadData(serviceName: string, msgName?: string, serviceOption?: string): DownloadData | undefined;
   listDownloadData(): DownloadData[];
+  deleteDownloadData(id: number): void;
 
   createUploadedOrder(data: Omit<UploadedOrder, 'id' | 'processed' | 'createdAt' | 'orderId'> & { orderId?: string }): UploadedOrder;
   listUploadedOrders(): UploadedOrder[];
@@ -307,6 +312,10 @@ export interface PaymentOrder {
   debtorName?: string;
   debtorIban?: string;
   requestedEds: boolean;
+  /** Distinct users whose signatures release the order (the upload's own signature counts) */
+  signaturesRequired: number;
+  /** Held until an electronic signature (HVE) confirms a VoP result other than RCVC */
+  vopConfirmationRequired: boolean;
   status: PaymentOrderStatus;
   createdAt: string;
   updatedAt: string;
@@ -337,11 +346,24 @@ export interface PaymentStatusEvent {
   createdAt: string;
 }
 
-export type NewPaymentOrder = Omit<PaymentOrder, 'id' | 'createdAt' | 'updatedAt'>;
+export type NewPaymentOrder = Omit<PaymentOrder, 'id' | 'createdAt' | 'updatedAt' | 'signaturesRequired' | 'vopConfirmationRequired'> &
+  Partial<Pick<PaymentOrder, 'signaturesRequired' | 'vopConfirmationRequired'>>;
 export type NewPaymentTransaction = Omit<PaymentTransaction, 'id' | 'paymentOrderId'>;
 
 /** Download services that hand out each item once when no DateRange is requested */
-export type DeliveryKind = 'camt.054' | 'psr' | 'vop' | 'hac';
+export type DeliveryKind = 'camt.054' | 'psr' | 'vop' | 'hac' | 'ptk';
+
+export type OrderSignatureKind = 'UPLOAD' | 'HVE';
+
+/** Electronic signature on an EBICS order (VEU) */
+export interface OrderSignature {
+  id: number;
+  partnerId: string;
+  orderId: string;
+  userId: string;
+  kind: OrderSignatureKind;
+  signedAt: string;
+}
 
 export interface DateFilter {
   /** inclusive, YYYY-MM-DD */
@@ -374,6 +396,12 @@ export interface OrderLedgerStore {
     additionalInfo?: string[];
   }): PaymentStatusEvent;
   listPaymentStatusEvents(filter?: { paymentOrderId?: number; partnerId?: string } & DateFilter): PaymentStatusEvent[];
+
+  addOrderSignature(signature: { partnerId: string; orderId: string; userId: string; kind: OrderSignatureKind }): OrderSignature;
+  listOrderSignatures(partnerId: string, orderId: string): OrderSignature[];
+
+  /** Emits 'booking' (Booking), 'paymentOrder' (PaymentOrder), 'paymentStatus' (PaymentStatusEvent), 'hacEvent' (HacEvent) */
+  readonly events: EventEmitter;
 
   markDelivered(partnerId: string, kind: DeliveryKind, itemKeys: string[]): void;
   listDeliveredKeys(partnerId: string, kind: DeliveryKind): Set<string>;

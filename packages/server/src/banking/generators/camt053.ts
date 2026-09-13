@@ -11,7 +11,8 @@ export type StatementInput = CamtAccountInput;
 function addStatement(parent: any, input: StatementInput, fromDate: string, toDate: string, now: string) {
   const { account, bookings, openingBalanceCents } = input;
   const closingBalanceCents = openingBalanceCents + bookings.reduce((sum, b) => sum + b.amountCents, 0);
-  const stmtId = `STMT-${account.iban}-${Date.now()}`;
+  // Max35Text: timestamp plus account id stays well below 35 characters
+  const stmtId = `STMT${Date.now()}A${account.id}`;
 
   const s = parent.ele(NS, 'Stmt');
   s.ele(NS, 'Id').txt(stmtId);

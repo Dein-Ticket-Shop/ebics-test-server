@@ -5,11 +5,23 @@ import { generateBankKeys } from '../bank/bank-keys.js';
 import { createBankingAdminRoute } from './admin-banking.js';
 import { calculateIban } from '../banking/iban.js';
 import { createPaymentsAdminRoute } from './admin-payments.js';
+import { createVeuAdminRoute } from './admin-veu.js';
+import { createRealtimeAdminRoute } from './admin-realtime.js';
+import { RealtimeHub } from '../realtime/notifications.js';
 import { recordSubscriberActivated } from '../banking/order-events.js';
-import { allowPreActivation, edsHold, hacFormat, vopDefaultStatus } from '../config/feature-flags.js';
+import {
+  allowPreActivation,
+  edsHold,
+  hacDeniedPartners,
+  hacDownloadEvents,
+  hacFormat,
+  vopConfirmationRequired,
+  vopDefaultStatus,
+  wssOneTimeTokens,
+} from '../config/feature-flags.js';
 import { isStrictValidation } from '../banking/validation.js';
 
-export function createAdminRoute(store: AppStore, hostId?: string) {
+export function createAdminRoute(store: AppStore, hostId?: string, realtime: RealtimeHub = new RealtimeHub(store)) {
   const app = new Hono();
 
   app.get('/host', (c) => {
@@ -200,12 +212,21 @@ export function createAdminRoute(store: AppStore, hostId?: string) {
   app.post('/download-data', async (c) => {
     const body = await c.req.json<{
       serviceName: string;
+      serviceOption?: string;
       msgName?: string;
       content: string;
       contentType?: 'text' | 'base64';
     }>();
-    store.upsertDownloadData(body.serviceName, body.msgName, body.content, body.contentType ?? 'text');
+    if (!body?.serviceName || typeof body.content !== 'string') {
+      return c.json({ error: 'serviceName and content are required' }, 400);
+    }
+    store.upsertDownloadData(body.serviceName, body.msgName || undefined, body.content, body.contentType ?? 'text', body.serviceOption || undefined);
     return c.json({ status: 'ok', serviceName: body.serviceName });
+  });
+
+  app.delete('/download-data/:id', (c) => {
+    store.deleteDownloadData(parseInt(c.req.param('id'), 10));
+    return c.json({ status: 'deleted' });
   });
 
   app.get('/download-data', (c) => {
@@ -231,10 +252,16 @@ export function createAdminRoute(store: AppStore, hostId?: string) {
       vopDefault: vopDefaultStatus(),
       strictValidation: isStrictValidation(),
       allowPreActivation: allowPreActivation(),
+      hacDownloadEvents: hacDownloadEvents(),
+      hacDeniedPartners: hacDeniedPartners(),
+      vopConfirmation: vopConfirmationRequired(),
+      wssOneTimeTokens: wssOneTimeTokens(),
     });
   });
 
   app.route('/', createPaymentsAdminRoute(store));
+  app.route('/', createVeuAdminRoute(store));
+  app.route('/', createRealtimeAdminRoute(realtime));
 
   app.post('/reset', (c) => {
     store.reset();
