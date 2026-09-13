@@ -3,10 +3,11 @@
   import { base } from '$app/paths';
   import { deletePerson, updatePerson, createAccount } from '$lib/api.js';
   import Icon from '$lib/components/Icon.svelte';
-  import type { Person, Account } from '$lib/types.js';
+  import { calculateIban, formatIban } from '$lib/iban.js';
+  import type { Person, Account, BankConfig } from '$lib/types.js';
 
   interface Props {
-    data: { person: Person; accounts: Account[] };
+    data: { person: Person; accounts: Account[]; allAccounts: Account[]; bankConfig: BankConfig | null };
   }
 
   let { data }: Props = $props();
@@ -17,6 +18,20 @@
   let accountNumber = $state('');
   let creating = $state(false);
   let error = $state('');
+
+  // Live IBAN preview: bank code + account number, or the next number the server assigns
+  const ibanPreview = $derived.by(() => {
+    if (!data.bankConfig) return { error: 'Configure the bank first to create accounts.' };
+    const entered = accountNumber.replace(/\s/g, '');
+    if (entered && !/^\d{1,10}$/.test(entered)) return { error: 'Account number must be up to 10 digits.' };
+    const auto = !entered;
+    const number = auto
+      ? String(Math.max(0, ...data.allAccounts.map((a) => parseInt(a.accountNumber, 10) || 0)) + 1)
+      : entered;
+    const iban = calculateIban(data.bankConfig.blz, number);
+    const existing = data.allAccounts.find((a) => a.iban === iban);
+    return { iban, auto, existing };
+  });
 
   // Edit person
   let editing = $state(false);
@@ -184,10 +199,28 @@
         <label class="label" for="accNum"><span class="label-text text-xs">Account Number (optional)</span></label>
         <input id="accNum" type="text" inputmode="numeric" maxlength="10" class="input input-bordered input-sm font-mono" bind:value={accountNumber} placeholder="auto" />
       </div>
-      <button class="btn btn-primary btn-sm" disabled={creating || !accountName.trim()} onclick={handleCreateAccount}>
+      <button
+        class="btn btn-primary btn-sm"
+        disabled={creating || !accountName.trim() || !!ibanPreview.error || !!ibanPreview.existing}
+        onclick={handleCreateAccount}
+      >
         {creating ? '...' : 'Create'}
       </button>
       <button class="btn btn-ghost btn-sm" onclick={() => showNewAccount = false}>Cancel</button>
+    </div>
+    <div class="text-xs mt-2">
+      {#if ibanPreview.error}
+        <span class="text-warning">{ibanPreview.error}</span>
+      {:else}
+        <span class="text-base-content/50">IBAN</span>
+        <span class="font-mono ml-1">{formatIban(ibanPreview.iban!)}</span>
+        {#if ibanPreview.auto}
+          <span class="text-base-content/40 ml-1">(next free account number)</span>
+        {/if}
+        {#if ibanPreview.existing}
+          <span class="text-error ml-2">Already exists: {ibanPreview.existing.name}</span>
+        {/if}
+      {/if}
     </div>
     {#if error}
       <div class="alert alert-error mt-2 text-sm">{error}</div>
