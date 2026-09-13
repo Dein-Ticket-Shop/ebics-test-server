@@ -329,6 +329,12 @@ export interface WssParameters {
   USERID?: string;
 }
 
+/** Messages kept for a customer without an open connection (EBICS_WSS_REPLAY), oldest first */
+export interface KeptRealtimeMessages {
+  partnerId: string;
+  messages: { MCLASS: { NAME: string; VERS: string; TIMESTAMP: string }[]; [key: string]: unknown }[];
+}
+
 export interface RealtimeConnection {
   id: string;
   partnerId: string;

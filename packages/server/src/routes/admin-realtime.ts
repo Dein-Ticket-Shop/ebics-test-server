@@ -5,11 +5,13 @@ async function body<T>(c: Context): Promise<Partial<T>> {
   return (await c.req.json().catch(() => ({}))) as Partial<T>;
 }
 
-/** Real-time notifications: open connections, manual tokens and messages */
+/** Real-time notifications: open connections, kept messages (EBICS_WSS_REPLAY), manual tokens and messages */
 export function createRealtimeAdminRoute(realtime: RealtimeHub) {
   const app = new Hono();
 
   app.get('/realtime/connections', (c) => c.json(realtime.listConnections()));
+
+  app.get('/realtime/kept-messages', (c) => c.json(realtime.listKeptMessages()));
 
   app.post('/realtime/tokens', async (c) => {
     const input = await body<{ partnerId: string; userId: string }>(c);
@@ -26,13 +28,16 @@ export function createRealtimeAdminRoute(realtime: RealtimeHub) {
     if (btf.length === 0 && orderTypes.length === 0) {
       return c.json({ error: 'btf (SERVICE and MSGNAME per entry) or orderTypes is required' }, 400);
     }
-    return c.json({ sent: realtime.notify(input.partnerId, { userId: input.userId || undefined, btf, orderTypes }) });
+    const { sent, kept } = realtime.notify(input.partnerId, { userId: input.userId || undefined, btf, orderTypes });
+    // kept: held for a customer without an open connection (EBICS_WSS_REPLAY)
+    return c.json({ sent, ...(kept ? { kept } : {}) });
   });
 
   app.post('/realtime/info', async (c) => {
     const input = await body<{ text: string; lang: string }>(c);
     if (!input.text) return c.json({ error: 'text is required' }, 400);
-    return c.json({ sent: realtime.broadcastInfo(input.text, input.lang || 'DE') });
+    const { sent, kept } = realtime.broadcastInfo(input.text, input.lang || 'DE');
+    return c.json({ sent, ...(kept ? { kept } : {}) });
   });
 
   return app;

@@ -1,11 +1,11 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
-  import { broadcastRealtimeInfo, issueRealtimeToken, listRealtimeConnections, notifyRealtime } from '$lib/api.js';
-  import type { BtfNotification, RealtimeConnection, Subscriber, WssParameters } from '$lib/types.js';
+  import { broadcastRealtimeInfo, issueRealtimeToken, listKeptRealtimeMessages, listRealtimeConnections, notifyRealtime } from '$lib/api.js';
+  import type { BtfNotification, KeptRealtimeMessages, RealtimeConnection, Subscriber, WssParameters } from '$lib/types.js';
   import { apiErrorMessage, formatDateTime } from '$lib/payments.js';
 
   interface Props {
-    data: { connections: RealtimeConnection[]; subscribers: Subscriber[] };
+    data: { connections: RealtimeConnection[]; kept: KeptRealtimeMessages[]; subscribers: Subscriber[] };
   }
 
   let { data }: Props = $props();
@@ -16,11 +16,13 @@
   // Connections
   let refreshed = $state<RealtimeConnection[] | null>(null);
   const connections = $derived(refreshed ?? data.connections);
+  let refreshedKept = $state<KeptRealtimeMessages[] | null>(null);
+  const kept = $derived(refreshedKept ?? data.kept);
   let refreshError = $state('');
 
   async function refresh() {
     try {
-      refreshed = await listRealtimeConnections();
+      [refreshed, refreshedKept] = await Promise.all([listRealtimeConnections(), listKeptRealtimeMessages()]);
       refreshError = '';
     } catch (e) {
       refreshError = apiErrorMessage(e, 'Refresh failed');
@@ -31,6 +33,10 @@
     const timer = setInterval(refresh, 5000);
     return () => clearInterval(timer);
   });
+
+  const deliveryText = ({ sent, kept }: { sent: number; kept?: number }) =>
+    `Sent to ${sent} connection${sent === 1 ? '' : 's'}.` +
+    (kept ? ` Kept for ${kept} customer${kept === 1 ? '' : 's'} without connection.` : '');
 
   // Token
   let tPartner = $state('');
@@ -86,8 +92,8 @@
     notifyResult = '';
     notifyError = '';
     try {
-      const { sent } = await notifyRealtime({ partnerId: nPartner, userId: nUser || undefined, btf, orderTypes });
-      notifyResult = `Sent to ${sent} connection${sent === 1 ? '' : 's'}.`;
+      notifyResult = deliveryText(await notifyRealtime({ partnerId: nPartner, userId: nUser || undefined, btf, orderTypes }));
+      await refresh();
     } catch (e) {
       notifyError = apiErrorMessage(e, 'Sending the notification failed');
     }
@@ -104,8 +110,8 @@
     infoResult = '';
     infoError = '';
     try {
-      const { sent } = await broadcastRealtimeInfo({ text: infoText.trim(), lang: infoLang.trim() || 'DE' });
-      infoResult = `Sent to ${sent} connection${sent === 1 ? '' : 's'}.`;
+      infoResult = deliveryText(await broadcastRealtimeInfo({ text: infoText.trim(), lang: infoLang.trim() || 'DE' }));
+      await refresh();
     } catch (e) {
       infoError = apiErrorMessage(e, 'Broadcast failed');
     }
@@ -146,6 +152,34 @@
             <td class="font-mono">{connection.partnerId}</td>
             <td class="font-mono">{connection.userId ?? '-'}</td>
             <td class="text-sm">{formatDateTime(connection.connectedAt)}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
+{/if}
+
+{#if kept.length > 0}
+  <h2 class="text-lg font-semibold mb-1">Kept messages</h2>
+  <p class="text-xs text-base-content/50 mb-3">
+    Kept with <span class="font-mono">EBICS_WSS_REPLAY</span> for customers without an open connection and sent when a client
+    of the customer connects, as long as a token of the customer is valid.
+  </p>
+  <div class="overflow-x-auto bg-base-200 rounded-xl mb-6">
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>Partner</th>
+          <th>Messages</th>
+          <th>First delivery attempt</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each kept as entry (entry.partnerId)}
+          <tr>
+            <td class="font-mono">{entry.partnerId}</td>
+            <td class="font-mono text-xs">{entry.messages.map((message) => message.MCLASS[0]?.NAME).join(', ')}</td>
+            <td class="text-sm">{entry.messages[0]?.MCLASS[0] ? formatDateTime(entry.messages[0].MCLASS[0].TIMESTAMP) : '-'}</td>
           </tr>
         {/each}
       </tbody>

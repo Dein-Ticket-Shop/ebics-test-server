@@ -123,6 +123,16 @@ export const ENV_FLAGS = {
       'wssparam hands out one-time tokens (OTT `Y`): each token opens a single real-time WebSocket connection. ' +
       'By default tokens (OTT `N`) can reconnect until their VALIDITY ends.',
   }),
+  wssReplay: booleanFlag({
+    env: 'EBICS_WSS_REPLAY',
+    label: 'Replay missed real-time messages',
+    description:
+      'EBICS-HAA and INFO messages for a customer without an open real-time connection are kept and sent in order ' +
+      'when a client of the customer connects; their `TIMESTAMP` stays the time of the first delivery attempt. ' +
+      'DK Anlage 2 (chapters 3.1 and 3.2) allows this delayed delivery without requiring it. Messages are kept only ' +
+      'while a token issued for the customer has not reached its `VALIDITY`. By default messages without a ' +
+      'connection are dropped.',
+  }),
 } satisfies Record<string, EnvFlagDefinition>;
 
 function read<T extends EnvFlagValue>(flag: EnvFlagDefinition<T>): T {
@@ -176,4 +186,8 @@ export function hacDownloadEvents(): boolean {
 
 export function wssOneTimeTokens(): boolean {
   return read(ENV_FLAGS.wssOneTimeTokens);
+}
+
+export function wssReplay(): boolean {
+  return read(ENV_FLAGS.wssReplay);
 }

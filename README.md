@@ -136,6 +136,7 @@ All settings are read from the environment:
 | `EBICS_VOP_CONFIRMATION`   | `false`          | Hold credit transfers whose VoP group result is not `RCVC` until an HVE signature or an admin release |
 | `EBICS_HAC_DOWNLOAD_EVENTS`| `false`          | Add a `FILE_DOWNLOAD` event to the customer protocol for every download except HAC and PTK |
 | `EBICS_WSS_ONE_TIME_TOKEN` | `false`          | wssparam tokens open one WebSocket connection (`OTT` `Y`); by default a token can reconnect for one hour |
+| `EBICS_WSS_REPLAY`         | `false`          | Keep real-time messages for a customer without an open connection while a token of the customer is valid, and send them when a client connects (`TIMESTAMP` = first delivery attempt) |
 | `EBICS_LOG_LEVEL`          | `info`           | Log level (`trace`..`fatal`, or `silent`)    |
 | `EBICS_QUIET`              | `false`          | Shorthand for `silent` logging               |
 | `EBICS_LOG_JSON`           | unset            | Force raw JSON logs (no pretty printing)      |

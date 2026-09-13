@@ -3,7 +3,7 @@ import type { Duplex } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { AppStore, Booking, HacEvent, PaymentOrder, PaymentStatusEvent } from '../store/types.js';
-import { wssOneTimeTokens } from '../config/feature-flags.js';
+import { wssOneTimeTokens, wssReplay } from '../config/feature-flags.js';
 
 /**
  * EBICS real-time notifications (DK DFÜ-Abkommen Anlage 2 "Spezifikation Echtzeitbenachrichtigungen" V1.0):
@@ -53,6 +53,12 @@ export interface InfoMessage {
   INFO: { LANG: string; FREE: string }[];
 }
 
+/** Messages kept for a customer without an open connection (EBICS_WSS_REPLAY), oldest first */
+export interface KeptMessages {
+  partnerId: string;
+  messages: (HaaMessage | InfoMessage)[];
+}
+
 export interface RealtimeConnection {
   id: string;
   partnerId: string;
@@ -92,6 +98,7 @@ export class RealtimeHub {
   private readonly connections = new Map<WebSocket, RealtimeConnection>();
   private readonly wss = new WebSocketServer({ noServer: true });
   private readonly pending = new Map<string, PendingNotification>();
+  private readonly kept = new Map<string, (HaaMessage | InfoMessage)[]>();
   private flushTimer?: NodeJS.Timeout;
 
   constructor(private readonly store: AppStore) {
@@ -136,6 +143,7 @@ export class RealtimeHub {
       this.wss.handleUpgrade(request, socket, head, (ws) => {
         this.connections.set(ws, { id: randomUUID(), ...identity, connectedAt: new Date().toISOString() });
         ws.on('close', () => this.connections.delete(ws));
+        this.replay(ws, identity.partnerId);
       });
     });
   }
@@ -167,8 +175,17 @@ export class RealtimeHub {
     return [...this.connections.values()];
   }
 
-  /** Sends an EBICS-HAA message to every connection of the partner; returns the number of connections reached */
-  notify(partnerId: string, content: { userId?: string; btf?: BtfNotification[]; orderTypes?: string[] }): number {
+  /** Messages kept for customers without an open connection (EBICS_WSS_REPLAY) */
+  listKeptMessages(): KeptMessages[] {
+    this.dropExpiredKeptMessages();
+    return [...this.kept].map(([partnerId, messages]) => ({ partnerId, messages }));
+  }
+
+  /**
+   * Sends an EBICS-HAA message to every connection of the partner; returns the number of connections reached and
+   * whether the message was kept for a later connection instead (1 or 0, EBICS_WSS_REPLAY)
+   */
+  notify(partnerId: string, content: { userId?: string; btf?: BtfNotification[]; orderTypes?: string[] }): { sent: number; kept: number } {
     const message: HaaMessage = {
       MCLASS: [{ NAME: 'EBICS-HAA', VERS: '1.0', TIMESTAMP: timestamp() }],
       PARTNERID: partnerId,
@@ -176,21 +193,32 @@ export class RealtimeHub {
       ...(content.btf?.length ? { BTF: content.btf } : {}),
       ...(content.orderTypes?.length ? { ORDERTYPE: content.orderTypes } : {}),
     };
-    return this.send(message, (connection) => connection.partnerId === partnerId);
+    const sent = this.send(message, (connection) => connection.partnerId === partnerId);
+    return { sent, kept: sent === 0 && this.keep(partnerId, message) ? 1 : 0 };
   }
 
-  /** Broadcasts an INFO message to all connections */
-  broadcastInfo(text: string, lang = 'DE'): number {
+  /**
+   * Broadcasts an INFO message to all connections; returns the number of connections reached and of customers without
+   * an open connection the message was kept for (EBICS_WSS_REPLAY)
+   */
+  broadcastInfo(text: string, lang = 'DE'): { sent: number; kept: number } {
     const message: InfoMessage = {
       MCLASS: [{ NAME: 'INFO', VERS: '1.0', TIMESTAMP: timestamp() }],
       INFO: [{ LANG: lang, FREE: text }],
     };
-    return this.send(message, () => true);
+    const reached = new Set(this.openConnections().map((connection) => connection.partnerId));
+    const sent = this.send(message, () => true);
+    let kept = 0;
+    for (const partnerId of this.partnersWithValidToken()) {
+      if (!reached.has(partnerId) && this.keep(partnerId, message)) kept++;
+    }
+    return { sent, kept };
   }
 
   close(): void {
     if (this.flushTimer) clearTimeout(this.flushTimer);
     for (const ws of this.connections.keys()) ws.terminate();
+    this.kept.clear();
     this.wss.close();
   }
 
@@ -204,6 +232,47 @@ export class RealtimeHub {
       }
     }
     return sent;
+  }
+
+  private openConnections(): RealtimeConnection[] {
+    return [...this.connections].filter(([ws]) => ws.readyState === ws.OPEN).map(([, connection]) => connection);
+  }
+
+  /** A token issued for the customer has not reached its VALIDITY, so a client of the customer can (re)connect */
+  private hasValidToken(partnerId: string): boolean {
+    const now = Date.now();
+    return [...this.tokens.values()].some((token) => token.partnerId === partnerId && token.validUntil >= now);
+  }
+
+  private partnersWithValidToken(): Set<string> {
+    const now = Date.now();
+    return new Set([...this.tokens.values()].filter((token) => token.validUntil >= now).map((token) => token.partnerId));
+  }
+
+  /**
+   * DK Anlage 2 (chapters 3.1 and 3.2) lets the bank deliver a message later when no wss connection to the customer is
+   * active; its TIMESTAMP stays the first delivery attempt. With EBICS_WSS_REPLAY the message is kept while a token of
+   * the customer is valid.
+   */
+  private keep(partnerId: string, message: HaaMessage | InfoMessage): boolean {
+    if (!wssReplay() || !this.hasValidToken(partnerId)) return false;
+    this.kept.set(partnerId, [...(this.kept.get(partnerId) ?? []), message]);
+    return true;
+  }
+
+  private dropExpiredKeptMessages(): void {
+    for (const partnerId of [...this.kept.keys()]) {
+      if (!this.hasValidToken(partnerId)) this.kept.delete(partnerId);
+    }
+  }
+
+  /** Sends the messages kept for the customer to a new connection, once */
+  private replay(ws: WebSocket, partnerId: string): void {
+    this.dropExpiredKeptMessages();
+    const messages = this.kept.get(partnerId);
+    if (!messages) return;
+    this.kept.delete(partnerId);
+    for (const message of messages) ws.send(JSON.stringify(message));
   }
 
   private onBooking(booking: Booking): void {
@@ -223,7 +292,7 @@ export class RealtimeHub {
 
   /** Collects notifications per partner for a moment so one upload results in one message */
   private queue(partnerId: string, item: { btf?: BtfNotification; orderType?: string }): void {
-    if (this.connections.size === 0) return;
+    if (this.connections.size === 0 && !(wssReplay() && this.hasValidToken(partnerId))) return;
     const pending = this.pending.get(partnerId) ?? { btf: new Map(), orderTypes: new Set() };
     if (item.btf) pending.btf.set(Object.values(item.btf).join('/'), item.btf);
     if (item.orderType) pending.orderTypes.add(item.orderType);

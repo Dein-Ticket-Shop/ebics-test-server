@@ -13,7 +13,7 @@ import { buildPain001Document } from '../helpers/test-client.js';
 import { enrolSubscriber, uploadOrder, downloadOrder, type EbicsSession } from '../helpers/ebics-session.js';
 import type { Account } from '../../src/store/types.js';
 
-const FLAGS = ['EBICS_WSS_ONE_TIME_TOKEN', 'EBICS_HAC_FORMAT', 'EBICS_HAC_DOWNLOAD_EVENTS', 'EBICS_VOP_CONFIRMATION', 'EBICS_VOP_DEFAULT', 'EBICS_STRICT_VALIDATION'] as const;
+const FLAGS = ['EBICS_WSS_ONE_TIME_TOKEN', 'EBICS_WSS_REPLAY', 'EBICS_HAC_FORMAT', 'EBICS_HAC_DOWNLOAD_EVENTS', 'EBICS_VOP_CONFIRMATION', 'EBICS_VOP_DEFAULT', 'EBICS_STRICT_VALIDATION'] as const;
 
 const BTF = {
   camt054: { SERVICE: 'STM', SCOPE: 'DE', OPTION: 'SCI', CONTTYPE: 'ZIP', MSGNAME: 'camt.054' },
@@ -347,6 +347,83 @@ describe('Real-time notifications', () => {
       await waitFor(() => client.messages.length > 0);
       await sleep(150);
       expect(client.messages).toEqual([{ MCLASS: HAA_MCLASS, PARTNERID: PARTNER_ID, ORDERTYPE: ['HAC'] }]);
+    });
+  });
+
+  describe('replay of missed messages (EBICS_WSS_REPLAY)', () => {
+    const hacEvent = (partnerId = PARTNER_ID) =>
+      ctx.store.appendHacEvent({ partnerId, orderId: 'A999', action: 'ADDITIONAL', adminOrderType: 'BTU' });
+    const format = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+    it('drops messages for a customer without connection by default', async () => {
+      const params = await wssparam();
+      hacEvent();
+      expect((await api('POST', '/realtime/notify', { partnerId: PARTNER_ID, orderTypes: ['PTK'] })).json).toEqual({ sent: 0 });
+      await sleep(150);
+      expect((await api('GET', '/realtime/kept-messages')).json).toEqual([]);
+
+      const client = await open(basic(credentialsOf(params)));
+      await sleep(150);
+      expect(client.messages).toEqual([]);
+    });
+
+    it('keeps EBICS-HAA and INFO messages and sends them once, in order and with the first delivery attempt as TIMESTAMP', async () => {
+      process.env['EBICS_WSS_REPLAY'] = 'true';
+      const params = await wssparam();
+      const firstAttempt = Date.now() + 60_000;
+      vi.useFakeTimers({ toFake: ['Date'], now: firstAttempt });
+
+      hacEvent();
+      await waitFor(() => ctx.realtime.listKeptMessages().length === 1);
+      expect((await api('POST', '/realtime/info', { text: 'Wartung heute ab 22 Uhr' })).json).toEqual({ sent: 0, kept: 1 });
+      expect((await api('POST', '/realtime/notify', { partnerId: PARTNER_ID, orderTypes: ['PTK'] })).json).toEqual({ sent: 0, kept: 1 });
+      const kept = (await api('GET', '/realtime/kept-messages')).json;
+      expect(kept.map((entry: any) => [entry.partnerId, entry.messages.length])).toEqual([[PARTNER_ID, 3]]);
+
+      // The client reconnects ten minutes later with the same token
+      vi.setSystemTime(firstAttempt + 10 * 60_000);
+      const client = await open(basic(credentialsOf(params)));
+      await waitFor(() => client.messages.length === 3);
+      const mclass = (NAME: string) => [{ NAME, VERS: '1.0', TIMESTAMP: format(firstAttempt) }];
+      expect(client.messages).toEqual([
+        { MCLASS: mclass('EBICS-HAA'), PARTNERID: PARTNER_ID, ORDERTYPE: ['HAC'] },
+        { MCLASS: mclass('INFO'), INFO: [{ LANG: 'DE', FREE: 'Wartung heute ab 22 Uhr' }] },
+        { MCLASS: mclass('EBICS-HAA'), PARTNERID: PARTNER_ID, ORDERTYPE: ['PTK'] },
+      ]);
+      expect((await api('GET', '/realtime/kept-messages')).json).toEqual([]);
+
+      // Delivered messages are not sent again
+      const second = await open(basic(credentialsOf(params)));
+      await sleep(150);
+      expect(second.messages).toEqual([]);
+    });
+
+    it('keeps nothing while a client of the customer is connected or for customers without a valid token', async () => {
+      process.env['EBICS_WSS_REPLAY'] = 'true';
+      // No token was issued for PARTNER2
+      hacEvent('PARTNER2');
+      expect((await api('POST', '/realtime/notify', { partnerId: 'PARTNER2', orderTypes: ['HAC'] })).json).toEqual({ sent: 0 });
+
+      const params = await wssparam();
+      const client = await open(basic(credentialsOf(params)));
+      hacEvent();
+      await waitFor(() => client.messages.length === 1);
+      expect((await api('POST', '/realtime/info', { text: 'Wartung' })).json).toEqual({ sent: 1 });
+      await sleep(150);
+      expect(ctx.realtime.listKeptMessages()).toEqual([]);
+    });
+
+    it('drops kept messages once no token of the customer is valid anymore', async () => {
+      process.env['EBICS_WSS_REPLAY'] = 'true';
+      const params = await wssparam();
+      hacEvent();
+      await waitFor(() => ctx.realtime.listKeptMessages().length === 1);
+
+      vi.useFakeTimers({ toFake: ['Date'], now: Date.parse(params.VALIDITY) + 1_000 });
+      expect((await api('GET', '/realtime/kept-messages')).json).toEqual([]);
+      const later = await open(basic(credentialsOf(await wssparam())));
+      await sleep(150);
+      expect(later.messages).toEqual([]);
     });
   });
 

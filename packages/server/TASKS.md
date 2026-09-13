@@ -183,10 +183,10 @@
 - [x] SPR (chapters 4.5.1, 4.5.2): an upload with only the EU of the subscriber to be suspended over a dummy file with exactly one space, processed in the Initialisation phase; the response carries an OrderID but no TransactionID. Invalid EUs → `091111`/`091301`/…, an EU of another or an additional user → `091301` (interpretation, as for PUB/HCA/HCS), an OrderID in the request → technical `091113` EBICS_INVALID_REQUEST_CONTENT (chapter 5.5)
 - [x] HVE/HVS without TransactionKey or SignatureData answer `091113` as technical return code (EBICS annex 1, chapter 2)
 - [x] Orders of other customers cannot be listed or signed (cross-customer signatures, chapter 3.5, are an optional special case and not supported): HVU/HVZ list only the own customer's orders; HVD/HVT/HVE/HVS answer `091114` when no such order waits for signatures, otherwise `091007` (HVD/HVT, chapters 8.3.2, 8.3.3) or `090003` (HVE, chapter 8.3.4, and HVS). `091120` is only returned for EU files of another customer
+- [x] Replay of real-time messages behind `EBICS_WSS_REPLAY=true` (off by default): DK Anlage 2 (chapters 3.1, 3.2) allows delivering messages later when no wss connection to the customer is active, with `TIMESTAMP` = first delivery attempt, but does not require it. EBICS-HAA and INFO messages are kept per customer while a token of the customer has not reached its `VALIDITY` (our choice) and sent in order, once, when a client of the customer connects; `GET /api/realtime/kept-messages` and the Real-time page list them
 
 ### Not yet supported (TODO)
 
-- [ ] Replay of real-time messages for clients that were not connected
 - [ ] Technical subscribers with `SystemID` submitting on behalf of other users
 - [ ] Signature permissions limited to accounts, amounts or BTF, and orders that need two bank-technical signatures (minimum 2)
 - [ ] VEU for direct debits (pain.008 uploads are executed even when signatures are missing and `requestEDS` is set)

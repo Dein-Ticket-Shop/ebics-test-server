@@ -21,6 +21,7 @@ import type {
   VeuOrder,
   WssParameters,
   RealtimeConnection,
+  KeptRealtimeMessages,
   BtfNotification,
   DownloadData,
 } from './types.js';
@@ -235,12 +236,13 @@ export const cancelVeuOrder = (partnerId: string, orderId: string, data: { userI
 // Real-time notifications
 
 export const listRealtimeConnections = () => json<RealtimeConnection[]>(`${API}/realtime/connections`);
+export const listKeptRealtimeMessages = () => json<KeptRealtimeMessages[]>(`${API}/realtime/kept-messages`);
 export const issueRealtimeToken = (data: { partnerId: string; userId?: string }) =>
   json<WssParameters>(`${API}/realtime/tokens`, { method: 'POST', body: JSON.stringify(data) });
 export const notifyRealtime = (data: { partnerId: string; userId?: string; btf?: BtfNotification[]; orderTypes?: string[] }) =>
-  json<{ sent: number }>(`${API}/realtime/notify`, { method: 'POST', body: JSON.stringify(data) });
+  json<{ sent: number; kept?: number }>(`${API}/realtime/notify`, { method: 'POST', body: JSON.stringify(data) });
 export const broadcastRealtimeInfo = (data: { text: string; lang?: string }) =>
-  json<{ sent: number }>(`${API}/realtime/info`, { method: 'POST', body: JSON.stringify(data) });
+  json<{ sent: number; kept?: number }>(`${API}/realtime/info`, { method: 'POST', body: JSON.stringify(data) });
 
 // Seeded download data
 

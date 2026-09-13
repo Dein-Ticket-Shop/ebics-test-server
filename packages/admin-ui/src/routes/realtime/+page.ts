@@ -1,9 +1,10 @@
-import { listRealtimeConnections, listSubscribers } from '$lib/api.js';
+import { listKeptRealtimeMessages, listRealtimeConnections, listSubscribers } from '$lib/api.js';
 
 export async function load() {
-  const [connections, subscribers] = await Promise.all([
+  const [connections, kept, subscribers] = await Promise.all([
     listRealtimeConnections().catch(() => []),
+    listKeptRealtimeMessages().catch(() => []),
     listSubscribers().catch(() => []),
   ]);
-  return { connections, subscribers };
+  return { connections, kept, subscribers };
 }
