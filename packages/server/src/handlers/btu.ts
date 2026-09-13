@@ -4,6 +4,7 @@ import { processPain001 } from '../banking/processors/pain001.js';
 import { processPain008 } from '../banking/processors/pain008.js';
 import { OrderDataError, OrderAuthError, SignatureAuthorisationError } from '../banking/validation.js';
 import { directDebitProtocolText, receiveCreditTransfers } from '../banking/payments.js';
+import { holdDirectDebits } from '../banking/direct-debits.js';
 import { recordUploadCompleted, recordUploadRejected, type OrderContext } from '../banking/order-events.js';
 import { minimumSignaturesNote, uploadDecision, uploadSignatureClass } from '../banking/signatures.js';
 import { SignatureCheckError, decryptSignatureData, verifyUserSignatureData } from '../banking/electronic-signatures.js';
@@ -79,7 +80,8 @@ export function handleBtu(
     const signerClasses = signers.map((signer) => uploadSignatureClass(signatureFlag, signer.signatureClass));
 
     const minimumSignatures = store.getMinimumSignatures(subscriber.partnerId, serviceName);
-    if (uploadDecision({ signatureFlag, requestEds, signerClasses, minimumSignatures }) === 'reject') {
+    const decision = uploadDecision({ signatureFlag, requestEds, signerClasses, minimumSignatures });
+    if (decision === 'reject') {
       throw new SignatureAuthorisationError(
         `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus${minimumSignaturesNote(minimumSignatures)} und keine VEU angefordert`,
       );
@@ -105,9 +107,26 @@ export function handleBtu(
       }
       store.markUploadedOrderProcessed(order.id);
     } else if (msgName === 'pain.008') {
-      processPain008(rawContent, store, subscriber.partnerId);
-      store.markUploadedOrderProcessed(order.id);
-      if (events) recordUploadCompleted(store, events, directDebitProtocolText(store, rawContent));
+      if (context.orderId && decision === 'veu') {
+        // Signatures missing and EDS requested: the direct debits wait in the VEU (EBICS 3.0.2 chapter 8)
+        holdDirectDebits(store, {
+          rawContent,
+          partnerId: subscriber.partnerId,
+          userId: subscriber.userId,
+          orderId: context.orderId,
+          uploadedOrderId: order.id,
+          serviceName,
+          serviceOption: context.serviceOption,
+          msgName,
+          signers: signers.map((signer, index) => ({ userId: signer.userId, signatureClass: signerClasses[index]! })),
+          minimumSignatures,
+        });
+        store.markUploadedOrderProcessed(order.id);
+      } else {
+        processPain008(rawContent, store, subscriber.partnerId);
+        store.markUploadedOrderProcessed(order.id);
+        if (events) recordUploadCompleted(store, events, directDebitProtocolText(store, rawContent));
+      }
     } else if (events) {
       recordUploadCompleted(store, events);
     }

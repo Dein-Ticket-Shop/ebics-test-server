@@ -13,6 +13,7 @@ import {
   type VeuOrder,
 } from '../banking/veu.js';
 import { vopGroupStatus } from '../banking/generators/pain002.js';
+import { parsePain008 } from '../banking/processors/pain008.js';
 
 async function body<T>(c: Context): Promise<Partial<T>> {
   return (await c.req.json().catch(() => ({}))) as Partial<T>;
@@ -23,24 +24,32 @@ export function createVeuAdminRoute(store: AppStore) {
   const app = new Hono();
 
   const view = (veu: VeuOrder) => {
-    const first = veu.orders[0]!;
+    const first = veu.orders[0];
     const transactions = veu.orders.flatMap((o) => store.listPaymentTransactions(o.id));
+    const instructions = veu.kind === 'directDebit' ? parsePain008(veu.rawContent) : [];
+    const directDebits = instructions.flatMap((instruction) => instruction.transactions);
+    const amounts = veu.kind === 'directDebit' ? directDebits : transactions;
     return {
       partnerId: veu.partnerId,
       orderId: veu.orderId,
+      kind: veu.kind,
       paymentOrderIds: veu.orders.map((o) => o.id),
-      serviceName: first.serviceName,
-      serviceOption: first.serviceOption,
-      msgName: first.msgName,
-      msgId: first.msgId,
-      originatorUserId: first.userId,
-      createdAt: first.createdAt,
-      debtorName: first.debtorName,
-      debtorIban: first.debtorIban,
-      totalCents: transactions.reduce((sum, tx) => sum + tx.amountCents, 0),
-      currency: transactions[0]?.currency ?? 'EUR',
+      serviceName: veu.head.serviceName,
+      serviceOption: veu.head.serviceOption,
+      msgName: veu.head.msgName,
+      msgId: first?.msgId ?? instructions[0]?.msgId ?? '',
+      originatorUserId: veu.head.userId,
+      createdAt: veu.head.createdAt,
+      debtorName: first?.debtorName,
+      debtorIban: first?.debtorIban,
+      /** The creditor collecting a direct debit order */
+      creditorName: instructions[0]?.creditorName,
+      creditorIban: instructions[0]?.creditorIban,
+      totalCents: amounts.reduce((sum, tx) => sum + tx.amountCents, 0),
+      currency: amounts[0]?.currency ?? 'EUR',
       vopGroupStatus: vopGroupStatus(transactions.map((tx) => tx.vopStatus)),
       transactions,
+      directDebits,
       signatures: veu.signatures,
       signaturesDone: distinctSigners(veu),
       signaturesComplete: hasRequiredSignatures(veu),

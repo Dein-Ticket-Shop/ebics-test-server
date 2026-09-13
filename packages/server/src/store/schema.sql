@@ -212,6 +212,21 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+-- pain.008 direct debit uploads held in the VEU; the direct debits are booked on release
+CREATE TABLE IF NOT EXISTS direct_debit_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id TEXT NOT NULL,
+    uploaded_order_id INTEGER NOT NULL,
+    partner_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    service_name TEXT NOT NULL,
+    service_option TEXT,
+    msg_name TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 CREATE TABLE IF NOT EXISTS payment_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     payment_order_id INTEGER NOT NULL REFERENCES payment_orders(id) ON DELETE CASCADE,

@@ -18,9 +18,11 @@ import {
   numSigRequired,
   signVeuOrder,
   type VeuOrder,
+  type VeuOrderHead,
 } from '../banking/veu.js';
-import { creditTransferProtocolText } from '../banking/payments.js';
+import { creditTransferProtocolText, directDebitProtocolText } from '../banking/payments.js';
 import { parsePain001 } from '../banking/processors/pain001.js';
+import { parsePain008 } from '../banking/processors/pain008.js';
 import { logError } from '../logger.js';
 
 const NS = EBICS_NS.H005;
@@ -29,7 +31,7 @@ function formatAmount(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
-function addService(parent: XMLBuilder, order: PaymentOrder): void {
+function addService(parent: XMLBuilder, order: Pick<VeuOrderHead, 'serviceName' | 'serviceOption' | 'msgName'>): void {
   const service = parent.ele(NS, 'Service');
   service.ele(NS, 'ServiceName').txt(order.serviceName);
   service.ele(NS, 'Scope').txt('DE');
@@ -55,7 +57,7 @@ function addSigningInfo(parent: XMLBuilder, veu: VeuOrder, subscriber: Subscribe
     .att('NumSigDone', String(veu.signatures.length));
 }
 
-function addOriginatorInfo(parent: XMLBuilder, order: PaymentOrder): void {
+function addOriginatorInfo(parent: XMLBuilder, order: Pick<VeuOrderHead, 'partnerId' | 'userId' | 'createdAt'>): void {
   const originator = parent.ele(NS, 'OriginatorInfo');
   originator.ele(NS, 'PartnerID').txt(order.partnerId);
   originator.ele(NS, 'UserID').txt(order.userId);
@@ -100,7 +102,7 @@ function serviceFilters(ctx: HandlerContext, orderType: 'HVU' | 'HVZ'): ServiceF
  * Chapter 8.3.1: only orders whose BTF values are in the filter. Orders are listed with Scope DE and without
  * Container (see addService), so a filter asking for a container matches none of them.
  */
-function matchesServiceFilter(order: PaymentOrder, filter: ServiceFilter): boolean {
+function matchesServiceFilter(order: VeuOrderHead, filter: ServiceFilter): boolean {
   return (
     (!filter.serviceName || filter.serviceName === order.serviceName) &&
     (!filter.scope || filter.scope === 'DE') &&
@@ -119,7 +121,7 @@ function filteredVeuOrders(ctx: HandlerContext, store: AppStore, subscriber: Sub
   const filters = serviceFilters(ctx, orderType);
   const veuOrders = listVeuOrders(store, subscriber.partnerId);
   if (filters.length === 0) return veuOrders;
-  return veuOrders.filter((veu) => filters.some((filter) => matchesServiceFilter(veu.orders[0]!, filter)));
+  return veuOrders.filter((veu) => filters.some((filter) => matchesServiceFilter(veu.head, filter)));
 }
 
 /**
@@ -166,7 +168,7 @@ export function handleHvu(
 
   const root = create({ version: '1.0', encoding: 'UTF-8' }).ele(NS, 'HVUResponseOrderData');
   for (const veu of veuOrders) {
-    const first = veu.orders[0]!;
+    const first = veu.head;
     const details = root.ele(NS, 'OrderDetails');
     addService(details, first);
     details.ele(NS, 'OrderID').txt(veu.orderId);
@@ -177,6 +179,29 @@ export function handleHvu(
   }
 
   return { documents: [{ name: 'hvu.xml', content: root.end({ prettyPrint: true }) }] };
+}
+
+/**
+ * Amounts of the single orders and the ordering party (Auftraggeber) of the first logical file: the debtor of a credit
+ * transfer, the creditor collecting a direct debit. Its account is held at this bank.
+ */
+function orderSummary(
+  store: AppStore,
+  veu: VeuOrder,
+): { amounts: { amountCents: number; currency: string }[]; orderingParty?: { name?: string; iban?: string } } {
+  if (veu.kind === 'directDebit') {
+    const instructions = parsePain008(veu.rawContent);
+    const first = instructions[0];
+    return {
+      amounts: instructions.flatMap((instruction) => instruction.transactions),
+      orderingParty: first && { name: first.creditorName, iban: first.creditorIban },
+    };
+  }
+  const first = veu.orders[0]!;
+  return {
+    amounts: veu.orders.flatMap((order) => store.listPaymentTransactions(order.id)),
+    orderingParty: { name: first.debtorName, iban: first.debtorIban },
+  };
 }
 
 /** HVZ: VEU overview with order details of every order waiting for signatures, optionally restricted by ServiceFilter */
@@ -191,8 +216,8 @@ export function handleHvz(
 
   const root = create({ version: '1.0', encoding: 'UTF-8' }).ele(NS, 'HVZResponseOrderData');
   for (const veu of veuOrders) {
-    const first = veu.orders[0]!;
-    const transactions = veu.orders.flatMap((o) => store.listPaymentTransactions(o.id));
+    const first = veu.head;
+    const summary = orderSummary(store, veu);
     const details = root.ele(NS, 'OrderDetails');
     addService(details, first);
     details.ele(NS, 'OrderID').txt(veu.orderId);
@@ -201,20 +226,20 @@ export function handleHvz(
     details.ele(NS, 'OrderDataSize').txt(String(Math.max(1, Buffer.byteLength(veu.rawContent))));
     details.ele(NS, 'OrderDetailsAvailable').txt('true');
 
-    details.ele(NS, 'TotalOrders').txt(String(transactions.length));
+    details.ele(NS, 'TotalOrders').txt(String(summary.amounts.length));
     details
       .ele(NS, 'TotalAmount')
-      // Credit transfers (Überweisungen) are "true", direct debits "false" (EBICS 3.0.2 chapter 8.3.1.4)
-      .att('isCredit', 'true')
-      .txt(formatAmount(transactions.reduce((sum, tx) => sum + tx.amountCents, 0)));
-    details.ele(NS, 'Currency').txt(transactions[0]?.currency ?? 'EUR');
-    const firstTx = transactions[0];
-    if (firstTx) {
+      // Credit transfers (Überweisungen) are "true", direct debits (Lastschriften) "false" (EBICS 3.0.2 chapter 8.3.1.4)
+      .att('isCredit', String(veu.kind === 'creditTransfer'))
+      .txt(formatAmount(summary.amounts.reduce((sum, amount) => sum + amount.amountCents, 0)));
+    details.ele(NS, 'Currency').txt(summary.amounts[0]?.currency ?? 'EUR');
+    if (summary.orderingParty) {
+      // FirstOrderInfo: the ordering party (Auftraggeber) of the first logical file, as in the display file
       const info = details.ele(NS, 'FirstOrderInfo');
-      info.ele(NS, 'OrderPartyInfo').txt(firstTx.creditorName ?? '');
+      info.ele(NS, 'OrderPartyInfo').txt(summary.orderingParty.name ?? '');
       const account = info.ele(NS, 'AccountInfo');
-      account.ele(NS, 'AccountNumber').att('international', 'true').txt(firstTx.creditorIban ?? '');
-      account.ele(NS, 'BankCode').att('international', 'true').txt(firstTx.creditorBic ?? store.getBankConfig()?.bic ?? '');
+      account.ele(NS, 'AccountNumber').att('international', 'true').txt(summary.orderingParty.iban ?? '');
+      account.ele(NS, 'BankCode').att('international', 'true').txt(store.getBankConfig()?.bic ?? '');
     }
 
     addSigningInfo(details, veu, subscriber);
@@ -236,7 +261,8 @@ export function handleHvd(
   requireSignatureAuthorisation(subscriber);
   const root = create({ version: '1.0', encoding: 'UTF-8' }).ele(NS, 'HVDResponseOrderData');
   root.ele(NS, 'DataDigest').att('SignatureVersion', 'A006').txt(veu.dataDigest);
-  root.ele(NS, 'DisplayFile').txt(Buffer.from(creditTransferProtocolText(store, veu.orders).join('\n'), 'utf8').toString('base64'));
+  const displayFile = veu.kind === 'directDebit' ? directDebitProtocolText(store, veu.rawContent) : creditTransferProtocolText(store, veu.orders);
+  root.ele(NS, 'DisplayFile').txt(Buffer.from(displayFile.join('\n'), 'utf8').toString('base64'));
   root.ele(NS, 'OrderDataAvailable').txt('true');
   root.ele(NS, 'OrderDataSize').txt(String(Math.max(1, Buffer.byteLength(veu.rawContent))));
   root.ele(NS, 'OrderDetailsAvailable').txt('true');
@@ -276,16 +302,51 @@ function addHvtAccountInfo(
   if (party.name) account.ele(NS, 'AccountHolder').att('Role', role).txt(party.name);
 }
 
+interface HvtSingleOrder {
+  originator: { iban?: string; bic?: string; name?: string };
+  recipient: { iban?: string; bic?: string; name?: string };
+  executionDate?: string;
+  amountCents: number;
+  currency: string;
+  remittanceInfo?: string;
+}
+
 /**
- * HVT with completeOrderData="false" (EBICS 3.0.2 chapter 8.3.3): HVTResponseOrderData with NumOrderInfos (every
- * CdtTrfTxInf of the pain.001 file) and one OrderInfo per single order, at most fetchLimit (0 = all) starting at the
- * running number fetchOffset (0 = first).
+ * The single orders of the order data: every CdtTrfTxInf of a pain.001 file, or every DrctDbtTxInf of a pain.008 file,
+ * where the creditor collecting the direct debit is the ordering party (Originator) and the debtor the Recipient
+ */
+function hvtSingleOrders(veu: VeuOrder): HvtSingleOrder[] {
+  if (veu.kind === 'directDebit') {
+    return parsePain008(veu.rawContent).flatMap((instruction) =>
+      instruction.transactions.map((transaction) => ({
+        originator: { iban: instruction.creditorIban, name: instruction.creditorName },
+        recipient: { iban: transaction.debtorIban, bic: transaction.debtorBic, name: transaction.debtorName },
+        executionDate: instruction.requestedCollectionDate,
+        amountCents: transaction.amountCents,
+        currency: transaction.currency,
+        remittanceInfo: transaction.remittanceInfo,
+      })),
+    );
+  }
+  return parsePain001(parseXml(veu.rawContent), { includeNonPositiveAmounts: true }).flatMap((instruction) =>
+    instruction.transactions.map((transaction) => ({
+      originator: { iban: instruction.debtorIban, bic: instruction.debtorBic, name: instruction.debtorName },
+      recipient: { iban: transaction.creditorIban, bic: transaction.creditorBic, name: transaction.creditorName },
+      executionDate: instruction.requestedExecutionDate,
+      amountCents: transaction.amountCents,
+      currency: transaction.currency,
+      remittanceInfo: transaction.remittanceInfo,
+    })),
+  );
+}
+
+/**
+ * HVT with completeOrderData="false" (EBICS 3.0.2 chapter 8.3.3): HVTResponseOrderData with NumOrderInfos (every single
+ * order of the file) and one OrderInfo per single order, at most fetchLimit (0 = all) starting at the running number
+ * fetchOffset (0 = first).
  */
 function hvtOrderDetails(veu: VeuOrder, fetchLimit: number, fetchOffset: number): string {
-  const first = veu.orders[0]!;
-  const details = parsePain001(parseXml(veu.rawContent), { includeNonPositiveAmounts: true }).flatMap((instruction) =>
-    instruction.transactions.map((transaction) => ({ instruction, transaction })),
-  );
+  const details = hvtSingleOrders(veu);
   // Chapter 8.3.3.1: a fetchOffset beyond the single orders is EBICS_INVALID_ORDER_PARAMS. An offset equal to their
   // number is refused as well, because HVTResponseOrderData needs at least one OrderInfo.
   if (fetchOffset >= details.length) {
@@ -295,18 +356,18 @@ function hvtOrderDetails(veu: VeuOrder, fetchLimit: number, fetchOffset: number)
 
   const root = create({ version: '1.0', encoding: 'UTF-8' }).ele(NS, 'HVTResponseOrderData');
   root.ele(NS, 'NumOrderInfos').txt(String(details.length));
-  for (const { instruction, transaction } of selected) {
+  for (const order of selected) {
     const info = root.ele(NS, 'OrderInfo');
-    info.ele(NS, 'MsgName').txt(first.msgName);
-    addHvtAccountInfo(info, 'Originator', { iban: instruction.debtorIban, bic: instruction.debtorBic, name: instruction.debtorName });
-    addHvtAccountInfo(info, 'Recipient', { iban: transaction.creditorIban, bic: transaction.creditorBic, name: transaction.creditorName });
-    if (instruction.requestedExecutionDate) {
-      info.ele(NS, 'ExecutionDate').txt(instruction.requestedExecutionDate.slice(0, 10));
+    info.ele(NS, 'MsgName').txt(veu.head.msgName);
+    addHvtAccountInfo(info, 'Originator', order.originator);
+    addHvtAccountInfo(info, 'Recipient', order.recipient);
+    if (order.executionDate) {
+      info.ele(NS, 'ExecutionDate').txt(order.executionDate.slice(0, 10));
     }
-    // A credit transfer is a credit (isCredit="true"), as in the example of chapter 8.3.3.2
-    info.ele(NS, 'Amount').att('isCredit', 'true').att('Currency', transaction.currency).txt(formatAmount(transaction.amountCents));
-    if (transaction.remittanceInfo) {
-      info.ele(NS, 'Description').att('Type', 'Purpose').txt(transaction.remittanceInfo);
+    // A credit transfer is a credit (isCredit="true", example of chapter 8.3.3.2), a direct debit is not
+    info.ele(NS, 'Amount').att('isCredit', String(veu.kind === 'creditTransfer')).att('Currency', order.currency).txt(formatAmount(order.amountCents));
+    if (order.remittanceInfo) {
+      info.ele(NS, 'Description').att('Type', 'Purpose').txt(order.remittanceInfo);
     }
   }
   return root.end({ prettyPrint: true });

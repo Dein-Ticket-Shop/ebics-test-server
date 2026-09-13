@@ -287,9 +287,22 @@ export interface OrderSignature {
   signedAt: string;
 }
 
+/** One direct debit (DrctDbtTxInf) of a pain.008 order waiting in the VEU */
+export interface DirectDebitTransaction {
+  endToEndId?: string;
+  debtorName?: string;
+  debtorIban?: string;
+  debtorBic?: string;
+  amountCents: number;
+  currency: string;
+  remittanceInfo?: string;
+}
+
 export interface VeuOrder {
   partnerId: string;
   orderId: string;
+  /** pain.001 credit transfers or a pain.008 direct debit upload */
+  kind: 'creditTransfer' | 'directDebit';
   paymentOrderIds: number[];
   serviceName: string;
   serviceOption?: string;
@@ -299,10 +312,15 @@ export interface VeuOrder {
   createdAt: string;
   debtorName?: string;
   debtorIban?: string;
+  /** The creditor collecting a direct debit order */
+  creditorName?: string;
+  creditorIban?: string;
   totalCents: number;
   currency: string;
   vopGroupStatus: VopStatus;
   transactions: PaymentTransaction[];
+  /** Direct debits of a direct debit order */
+  directDebits: DirectDebitTransaction[];
   /** bank-technical signatures (E, A, B) */
   signatures: OrderSignature[];
   /** Minimum number of bank-technical signatures agreed for the customer and service */

@@ -244,14 +244,15 @@ describe('Signature classes (EBICS)', () => {
       expect(signatures(orderId)).toEqual([[USER_ID, 'UPLOAD', signatureClass]]);
     });
 
-    it('does not hold direct debits: a pain.008 by class A is executed', async () => {
+    it('holds a pain.008 by class A in the VEU as well, without booking', async () => {
       setClass('A');
       const { orderId, code } = await upload(ctx.session, directDebit('SDD-A'), SDD, 'requestEDS');
       expect(code).toBe('000000');
       expect(ctx.store.listPaymentOrders()).toEqual([]);
-      expect(balances()).toEqual([1_000_000 + 500, -500]);
-      expect(actions(orderId)).not.toContain('VEU_FORWARDING');
-      expect(actions(orderId).at(-1)).toBe('ORDER_HAC_FINAL_POS');
+      expect(ctx.store.listDirectDebitOrders().map((o) => [o.orderId, o.status])).toEqual([[orderId, 'PENDING_EDS']]);
+      expect(balances()).toEqual(UNCHANGED_BALANCES);
+      expect(actions(orderId)).toEqual(['FILE_UPLOAD', 'ES_VERIFICATION', 'VEU_FORWARDING']);
+      expect(signatures(orderId)).toEqual([[USER_ID, 'UPLOAD', 'A']]);
     });
   });
 

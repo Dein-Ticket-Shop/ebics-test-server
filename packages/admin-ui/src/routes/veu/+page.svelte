@@ -140,9 +140,13 @@
           <div>
             <div class="flex items-center gap-2 flex-wrap">
               <h2 class="text-lg font-bold font-mono">{o.partnerId} / {o.orderId}</h2>
-              <span class="badge badge-outline badge-sm {VOP_STATUS[o.vopGroupStatus].badge}" title={o.vopGroupStatus}>
-                VoP: {VOP_STATUS[o.vopGroupStatus].label}
-              </span>
+              {#if o.kind === 'directDebit'}
+                <span class="badge badge-outline badge-sm">Direct debit</span>
+              {:else}
+                <span class="badge badge-outline badge-sm {VOP_STATUS[o.vopGroupStatus].badge}" title={o.vopGroupStatus}>
+                  VoP: {VOP_STATUS[o.vopGroupStatus].label}
+                </span>
+              {/if}
               {#if confirmationPending(o)}
                 <span class="badge badge-warning badge-sm">VoP confirmation pending</span>
               {/if}
@@ -161,15 +165,17 @@
           <div class="text-right shrink-0">
             <div class="text-xs text-base-content/50">Total</div>
             <div class="font-mono text-xl font-bold">{formatCents(o.totalCents, o.currency)}</div>
-            <a href="{base}/payments/{o.paymentOrderIds[0]}" class="link link-hover text-xs">Payment order</a>
+            {#if o.paymentOrderIds.length > 0}
+              <a href="{base}/payments/{o.paymentOrderIds[0]}" class="link link-hover text-xs">Payment order</a>
+            {/if}
           </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4 text-sm">
           <div>
-            <div class="text-[11px] text-base-content/40 uppercase tracking-wide">Debtor</div>
-            <div class="mt-0.5">{o.debtorName ?? '-'}</div>
-            <div class="font-mono text-xs text-base-content/60">{o.debtorIban ?? ''}</div>
+            <div class="text-[11px] text-base-content/40 uppercase tracking-wide">{o.kind === 'directDebit' ? 'Creditor' : 'Debtor'}</div>
+            <div class="mt-0.5">{(o.kind === 'directDebit' ? o.creditorName : o.debtorName) ?? '-'}</div>
+            <div class="font-mono text-xs text-base-content/60">{(o.kind === 'directDebit' ? o.creditorIban : o.debtorIban) ?? ''}</div>
           </div>
           <div>
             <div class="text-[11px] text-base-content/40 uppercase tracking-wide">Signatures</div>
@@ -198,10 +204,12 @@
             <thead>
               <tr>
                 <th>E2E ID</th>
-                <th>Creditor</th>
+                <th>{o.kind === 'directDebit' ? 'Debtor' : 'Creditor'}</th>
                 <th>IBAN</th>
                 <th class="text-right">Amount</th>
-                <th>VoP</th>
+                {#if o.kind === 'creditTransfer'}
+                  <th>VoP</th>
+                {/if}
               </tr>
             </thead>
             <tbody>
@@ -217,6 +225,14 @@
                       <span class="text-base-content/60">{tx.vopCorrectedName}</span>
                     {/if}
                   </td>
+                </tr>
+              {/each}
+              {#each o.directDebits as debit, index (index)}
+                <tr>
+                  <td class="font-mono text-xs max-w-[10rem] truncate" title={debit.endToEndId}>{debit.endToEndId ?? '-'}</td>
+                  <td class="text-xs">{debit.debtorName ?? '-'}</td>
+                  <td class="font-mono text-xs">{debit.debtorIban ?? '-'}</td>
+                  <td class="text-right font-mono text-xs">{formatCents(debit.amountCents, debit.currency)}</td>
                 </tr>
               {/each}
             </tbody>

@@ -15,7 +15,7 @@ import type {
   OrderSignature,
   OrderSignatureKind,
   PaymentOrder,
-  PaymentOrderStatus,
+  PaymentOrderStatus, DirectDebitOrder,
   PaymentStatusCode,
   PaymentStatusEvent,
   PaymentTransaction,
@@ -424,6 +424,7 @@ export class SqliteStore implements AppStore {
     this.db.exec('DELETE FROM payment_status_events');
     this.db.exec('DELETE FROM payment_transactions');
     this.db.exec('DELETE FROM payment_orders');
+    this.db.exec('DELETE FROM direct_debit_orders');
     this.db.exec('DELETE FROM hac_events');
     this.db.exec('DELETE FROM deliveries');
     this.db.exec('DELETE FROM order_id_counters');
@@ -888,6 +889,51 @@ export class SqliteStore implements AppStore {
 
   updatePaymentOrderStatus(id: number, status: PaymentOrderStatus): void {
     this.db.prepare(`UPDATE payment_orders SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`).run(status, id);
+  }
+
+  // Direct debit uploads waiting in the VEU
+
+  createDirectDebitOrder(order: Omit<DirectDebitOrder, 'id' | 'status' | 'createdAt' | 'updatedAt'>): DirectDebitOrder {
+    const result = this.db.prepare(`
+      INSERT INTO direct_debit_orders (order_id, uploaded_order_id, partner_id, user_id, service_name, service_option, msg_name, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING_EDS')
+    `).run(order.orderId, order.uploadedOrderId, order.partnerId, order.userId, order.serviceName, order.serviceOption ?? null, order.msgName);
+    return this.getDirectDebitOrder(Number(result.lastInsertRowid))!;
+  }
+
+  getDirectDebitOrder(id: number): DirectDebitOrder | undefined {
+    const row = this.db.prepare('SELECT * FROM direct_debit_orders WHERE id = ?').get(id) as Row | undefined;
+    return row ? this.rowToDirectDebitOrder(row) : undefined;
+  }
+
+  listDirectDebitOrders(filter: { partnerId?: string; orderId?: string; status?: PaymentOrderStatus } = {}): DirectDebitOrder[] {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (filter.partnerId) { where.push('partner_id = ?'); params.push(filter.partnerId); }
+    if (filter.orderId) { where.push('order_id = ?'); params.push(filter.orderId); }
+    if (filter.status) { where.push('status = ?'); params.push(filter.status); }
+    const sql = `SELECT * FROM direct_debit_orders${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY id`;
+    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => this.rowToDirectDebitOrder(r));
+  }
+
+  updateDirectDebitOrderStatus(id: number, status: PaymentOrderStatus): void {
+    this.db.prepare(`UPDATE direct_debit_orders SET status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`).run(status, id);
+  }
+
+  private rowToDirectDebitOrder(row: Row): DirectDebitOrder {
+    return {
+      id: row['id'] as number,
+      orderId: row['order_id'] as string,
+      uploadedOrderId: row['uploaded_order_id'] as number,
+      partnerId: row['partner_id'] as string,
+      userId: row['user_id'] as string,
+      serviceName: row['service_name'] as string,
+      serviceOption: (row['service_option'] as string) ?? undefined,
+      msgName: row['msg_name'] as string,
+      status: row['status'] as PaymentOrderStatus,
+      createdAt: row['created_at'] as string,
+      updatedAt: row['updated_at'] as string,
+    };
   }
 
   listPaymentTransactions(paymentOrderId: number): PaymentTransaction[] {

@@ -196,8 +196,9 @@ describe('VEU (distributed electronic signature)', () => {
       expect(localTexts(xml, 'OrderDetails/TotalAmount')).toEqual(['24.68']);
       expect(localAttribute(xml, 'TotalAmount', 'isCredit')).toBe('true');
       expect(localTexts(xml, 'OrderDetails/Currency')).toEqual(['EUR']);
-      expect(localTexts(xml, 'FirstOrderInfo/OrderPartyInfo')).toEqual(['Bob Mustermann']);
-      expect(localTexts(xml, 'FirstOrderInfo/AccountInfo/AccountNumber')).toEqual([ctx.creditor.iban]);
+      // The ordering party (Auftraggeber) of the first logical file as in the display file: the debtor of the credit transfer
+      expect(localTexts(xml, 'FirstOrderInfo/OrderPartyInfo')).toEqual(['Musterfirma GmbH']);
+      expect(localTexts(xml, 'FirstOrderInfo/AccountInfo/AccountNumber')).toEqual([ctx.debtor.iban]);
       expect(localAttribute(xml, 'AccountNumber', 'international')).toBe('true');
       expect(localTexts(xml, 'FirstOrderInfo/AccountInfo/BankCode')).toEqual(['ETBADE2AXXX']);
 

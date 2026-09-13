@@ -11,8 +11,9 @@ import { validateOrderData, validateOrderingAccount } from '../validation.js';
  * etc. all work without hard-coding a namespace.
  */
 export function processPain008(rawContent: string, store: AppStore, partnerId: string): void {
+  // The whole file is validated first, so a refused file books nothing
+  validatePain008(rawContent, store, partnerId);
   const doc = parseXml(rawContent);
-  validateOrderData(doc as unknown as Node);
 
   const pmtInfs = xpathSelect("//*[local-name()='PmtInf']", doc);
   if (!Array.isArray(pmtInfs)) return;
@@ -24,7 +25,6 @@ export function processPain008(rawContent: string, store: AppStore, partnerId: s
     // account held here that the uploading partner may collect into.
     const creditorName = lnText(node, "Cdtr/Nm");
     const creditorIban = lnText(node, "CdtrAcct/Id/IBAN");
-    validateOrderingAccount(store, partnerId, creditorIban, 'creditor');
     const creditorAccount = creditorIban ? store.getAccountByIban(creditorIban) : undefined;
 
     const txInfs = xpathSelect("./*[local-name()='DrctDbtTxInf']", node as any);
@@ -39,6 +39,75 @@ export function processPain008(rawContent: string, store: AppStore, partnerId: s
       }
     }
   }
+}
+
+/** IBAN/BIC format of the file and, for every PmtInf, the creditor account the uploading partner collects into */
+export function validatePain008(rawContent: string, store: AppStore, partnerId: string): void {
+  const doc = parseXml(rawContent);
+  validateOrderData(doc as unknown as Node);
+  const pmtInfs = xpathSelect("//*[local-name()='PmtInf']", doc);
+  for (const pmtInf of Array.isArray(pmtInfs) ? pmtInfs : []) {
+    validateOrderingAccount(store, partnerId, lnText(pmtInf as Node, 'CdtrAcct/Id/IBAN'), 'creditor');
+  }
+}
+
+export interface DirectDebitTransaction {
+  endToEndId?: string;
+  debtorName?: string;
+  debtorIban?: string;
+  debtorBic?: string;
+  amountCents: number;
+  currency: string;
+  remittanceInfo?: string;
+}
+
+/** One PmtInf of a pain.008 file: the creditor collects every direct debit below it */
+export interface DirectDebitInstruction {
+  msgId: string;
+  pmtInfId: string;
+  creditorName?: string;
+  creditorIban?: string;
+  /** ReqdColltnDt */
+  requestedCollectionDate?: string;
+  transactions: DirectDebitTransaction[];
+}
+
+/** The PmtInfs and direct debits (DrctDbtTxInf with a positive amount) of a pain.008 file */
+export function parsePain008(rawContent: string): DirectDebitInstruction[] {
+  const doc = parseXml(rawContent);
+  const msgIdNodes = xpathSelect("//*[local-name()='GrpHdr']/*[local-name()='MsgId']/text()", doc);
+  const msgId = Array.isArray(msgIdNodes) && msgIdNodes.length > 0 ? ((msgIdNodes[0] as { nodeValue?: string | null }).nodeValue ?? '') : '';
+  const pmtInfs = xpathSelect("//*[local-name()='PmtInf']", doc);
+  return (Array.isArray(pmtInfs) ? pmtInfs : []).map((pmtInf) => {
+    const node = pmtInf as Node;
+    const txInfs = xpathSelect("./*[local-name()='DrctDbtTxInf']", node as any);
+    const transactions = (Array.isArray(txInfs) ? txInfs : []).flatMap((txInf): DirectDebitTransaction[] => {
+      const tx = txInf as Node;
+      const amountCents = Math.round(parseFloat(lnText(tx, 'InstdAmt') ?? lnText(tx, 'Amt/InstdAmt') ?? '') * 100);
+      if (isNaN(amountCents) || amountCents <= 0) return [];
+      const currencyNodes = xpathSelect("./*[local-name()='InstdAmt']/@Ccy | ./*[local-name()='Amt']/*[local-name()='InstdAmt']/@Ccy", tx as any);
+      const currency = Array.isArray(currencyNodes) && currencyNodes.length > 0 ? ((currencyNodes[0] as Attr).value || 'EUR') : 'EUR';
+      return [
+        {
+          endToEndId: lnText(tx, 'PmtId/EndToEndId'),
+          debtorName: lnText(tx, 'Dbtr/Nm'),
+          debtorIban: lnText(tx, 'DbtrAcct/Id/IBAN'),
+          debtorBic: lnText(tx, 'DbtrAgt/FinInstnId/BICFI') ?? lnText(tx, 'DbtrAgt/FinInstnId/BIC'),
+          amountCents,
+          currency,
+          remittanceInfo: lnText(tx, 'RmtInf/Ustrd'),
+        },
+      ];
+    });
+    return {
+      msgId,
+      pmtInfId: lnText(node, 'PmtInfId') ?? '',
+      creditorName: lnText(node, 'Cdtr/Nm'),
+      creditorIban: lnText(node, 'CdtrAcct/Id/IBAN'),
+      requestedCollectionDate: lnText(node, 'ReqdColltnDt'),
+      transactions,
+    };
+  });
 }
 
 function processDebit(

@@ -1,16 +1,33 @@
 import { orderDataHash } from './electronic-signatures.js';
-import type { AppStore, MinimumSignatures, OrderSignature, PaymentOrder, SignatureClass } from '../store/types.js';
+import type { AppStore, DirectDebitOrder, MinimumSignatures, OrderSignature, PaymentOrder, SignatureClass } from '../store/types.js';
 import { ReturnCode } from '../protocol/return-codes.js';
 import { cancelPaymentOrder, releasePaymentOrder } from './payments.js';
+import { cancelDirectDebitOrder, releaseDirectDebitOrder } from './direct-debits.js';
 import { recordEvent } from './order-events.js';
 import { isAuthorised, isBankTechnical, missingSignatures } from './signatures.js';
+
+/** Service, originator and creation time of an order in the VEU */
+export interface VeuOrderHead {
+  partnerId: string;
+  orderId: string;
+  userId: string;
+  serviceName: string;
+  serviceOption?: string;
+  msgName: string;
+  createdAt: string;
+}
 
 /** An EBICS order (partner + OrderID) waiting in the VEU (distributed electronic signature) */
 export interface VeuOrder {
   partnerId: string;
   orderId: string;
-  /** PmtInfs of the order, oldest first */
+  /** pain.001 credit transfers (payment orders) or a pain.008 direct debit upload */
+  kind: 'creditTransfer' | 'directDebit';
+  head: VeuOrderHead;
+  /** PmtInfs of a credit transfer order, oldest first; empty for direct debits */
   orders: PaymentOrder[];
+  /** The held direct debit upload */
+  directDebit?: DirectDebitOrder;
   /** Bank-technical signatures (E, A, B) in signing order; transport signatures are not VEU signatures */
   signatures: OrderSignature[];
   /**
@@ -51,12 +68,34 @@ function toVeuOrder(store: AppStore, orders: PaymentOrder[]): VeuOrder {
   return {
     partnerId: first.partnerId,
     orderId: first.orderId,
+    kind: 'creditTransfer',
+    head: first,
     orders,
     signatures,
     signaturesNeeded: orders.some((o) => o.requestedEds),
     minimumSignatures: store.getMinimumSignatures(first.partnerId, first.serviceName),
     vopConfirmationRequired: orders.some((o) => o.vopConfirmationRequired),
     vopConfirmed: signatures.some((s) => s.kind === 'HVE'),
+    rawContent,
+    dataDigest: orderDataDigest(rawContent),
+  };
+}
+
+function directDebitVeuOrder(store: AppStore, order: DirectDebitOrder): VeuOrder {
+  const rawContent = store.getUploadedOrder(order.uploadedOrderId)?.rawContent ?? '';
+  return {
+    partnerId: order.partnerId,
+    orderId: order.orderId,
+    kind: 'directDebit',
+    head: order,
+    orders: [],
+    directDebit: order,
+    signatures: store.listOrderSignatures(order.partnerId, order.orderId).filter((s) => isBankTechnical(s.signatureClass)),
+    // Only direct debits that request EDS are held
+    signaturesNeeded: true,
+    minimumSignatures: store.getMinimumSignatures(order.partnerId, order.serviceName),
+    vopConfirmationRequired: false,
+    vopConfirmed: false,
     rawContent,
     dataDigest: orderDataDigest(rawContent),
   };
@@ -69,12 +108,16 @@ export function listVeuOrders(store: AppStore, partnerId?: string): VeuOrder[] {
     const key = `${order.partnerId}|${order.orderId}`;
     byOrder.set(key, [...(byOrder.get(key) ?? []), order]);
   }
-  return [...byOrder.values()].map((orders) => toVeuOrder(store, orders));
+  const creditTransfers = [...byOrder.values()].map((orders) => toVeuOrder(store, orders));
+  const directDebits = store.listDirectDebitOrders({ partnerId, status: 'PENDING_EDS' }).map((order) => directDebitVeuOrder(store, order));
+  return [...creditTransfers, ...directDebits].sort((a, b) => a.head.createdAt.localeCompare(b.head.createdAt));
 }
 
 export function getVeuOrder(store: AppStore, partnerId: string, orderId: string): VeuOrder | undefined {
   const orders = store.listPaymentOrders({ partnerId, orderId, status: 'PENDING_EDS' }).reverse();
-  return orders.length > 0 ? toVeuOrder(store, orders) : undefined;
+  if (orders.length > 0) return toVeuOrder(store, orders);
+  const directDebit = store.listDirectDebitOrders({ partnerId, orderId, status: 'PENDING_EDS' })[0];
+  return directDebit ? directDebitVeuOrder(store, directDebit) : undefined;
 }
 
 export function distinctSigners(veu: VeuOrder): number {
@@ -114,6 +157,12 @@ export function canSign(veu: VeuOrder, signer: { userId: string; signatureClass:
   if (!isBankTechnical(signer.signatureClass)) return false;
   const confirmationPending = veu.vopConfirmationRequired && !veu.vopConfirmed;
   return confirmationPending || !veu.signatures.some((s) => s.userId === signer.userId);
+}
+
+/** Executes an order whose signatures authorise it: books the credit transfers or the direct debits */
+function releaseVeuOrder(store: AppStore, veu: VeuOrder): void {
+  if (veu.kind === 'directDebit') releaseDirectDebitOrder(store, veu.directDebit!.id);
+  else releasePaymentOrder(store, veu.orders[0]!.id);
 }
 
 function requireVeuOrder(store: AppStore, partnerId: string, orderId: string): VeuOrder {
@@ -165,7 +214,7 @@ export function signVeuOrder(
 
   const signed = requireVeuOrder(store, request.partnerId, request.orderId);
   if (!isReleasable(signed)) return { orderId: hveOrderId, released: false };
-  releasePaymentOrder(store, signed.orders[0]!.id);
+  releaseVeuOrder(store, signed);
   return { orderId: hveOrderId, released: true };
 }
 
@@ -187,6 +236,8 @@ export function cancelVeuOrder(
     }) ?? userIds[0]!;
   requireSignatureClass(store, { partnerId: request.partnerId, userId: canceller });
   const hvsOrderId = store.nextOrderId(request.partnerId);
-  cancelPaymentOrder(store, veu.orders[0]!.id, additionalInfo, { userId: canceller, orderId: hvsOrderId });
+  const cancelledBy = { userId: canceller, orderId: hvsOrderId };
+  if (veu.kind === 'directDebit') cancelDirectDebitOrder(store, veu.directDebit!.id, additionalInfo, cancelledBy);
+  else cancelPaymentOrder(store, veu.orders[0]!.id, additionalInfo, cancelledBy);
   return { orderId: hvsOrderId };
 }

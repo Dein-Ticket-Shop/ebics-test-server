@@ -366,6 +366,21 @@ export interface PaymentStatusEvent {
   createdAt: string;
 }
 
+/** A pain.008 direct debit upload waiting in the VEU; its direct debits are booked when it is released */
+export interface DirectDebitOrder {
+  id: number;
+  orderId: string;
+  uploadedOrderId: number;
+  partnerId: string;
+  userId: string;
+  serviceName: string;
+  serviceOption?: string;
+  msgName: string;
+  status: PaymentOrderStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type NewPaymentOrder = Omit<PaymentOrder, 'id' | 'createdAt' | 'updatedAt' | 'vopConfirmationRequired'> &
   Partial<Pick<PaymentOrder, 'vopConfirmationRequired'>>;
 export type NewPaymentTransaction = Omit<PaymentTransaction, 'id' | 'paymentOrderId'>;
@@ -419,6 +434,13 @@ export interface OrderLedgerStore {
   getPaymentOrder(id: number): PaymentOrder | undefined;
   listPaymentOrders(filter?: { partnerId?: string; status?: PaymentOrderStatus; orderId?: string; msgId?: string }): PaymentOrder[];
   updatePaymentOrderStatus(id: number, status: PaymentOrderStatus): void;
+
+  /** Holds a pain.008 upload in the VEU with status PENDING_EDS */
+  createDirectDebitOrder(order: Omit<DirectDebitOrder, 'id' | 'status' | 'createdAt' | 'updatedAt'>): DirectDebitOrder;
+  getDirectDebitOrder(id: number): DirectDebitOrder | undefined;
+  /** Oldest first */
+  listDirectDebitOrders(filter?: { partnerId?: string; orderId?: string; status?: PaymentOrderStatus }): DirectDebitOrder[];
+  updateDirectDebitOrderStatus(id: number, status: PaymentOrderStatus): void;
   listPaymentTransactions(paymentOrderId: number): PaymentTransaction[];
   getPaymentTransaction(id: number): PaymentTransaction | undefined;
   updatePaymentTransaction(
