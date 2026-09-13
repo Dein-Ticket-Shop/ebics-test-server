@@ -23,8 +23,12 @@ Deviations from the plan below (updated 2026-09-13):
   alone (class A, B or T), or when `EBICS_VOP_CONFIRMATION=true` and the VoP group result is not RCVC.
 - Uploads with SignatureFlag but without `requestEDS` whose signature class does not authorise the order are
   refused with `090003` (EBICS 3.0.2 chapter 3.14): `FILE_UPLOAD`, `ES_VERIFICATION` with `DS19` and `ORDER_HAC_FINAL_NEG`.
-- VEU signatures (HVE) produce `ES_UPLOAD` and `ES_VERIFICATION` under the HVE's own OrderID, with the BTU
-  order as reference. Cancellations (HVS, or the bank-side `/api/veu/orders` API) produce
+- Uploads, PUB, HCA and HCS whose electronic signatures fail verification produce `FILE_UPLOAD`,
+  `ES_VERIFICATION` with the reason of the failed check (`DS0B` incorrect, `DS0C` signer blocked, `DS0E` no public
+  key, `DS0G` signer not authorised or of another customer, `DS14` unknown user, `DS16` wrong key version, `DS26`
+  same user twice, `DS27` not activated, `DS08`/`DS09`/`TD03` undecodable signature data) and `ORDER_HAC_FINAL_NEG`.
+- VEU signatures (HVE) produce `ES_UPLOAD` and one `ES_VERIFICATION` per signer under the HVE's own OrderID, with the BTU
+  order as reference. An HVE or HVS whose EUs fail verification only returns the error code. Cancellations (HVS, or the bank-side `/api/veu/orders` API) produce
   `VEU_CANCEL_ORDER` under the HVS OrderID.
 - PTK renders the same ledger as ISO-8859-1 text. Without a DateRange it returns only entries not yet
   fetched via PTK.

@@ -29,8 +29,10 @@ export interface CreditTransferUpload {
   /** BTUOrderParams/SignatureFlag is present; defaults to requestEds, which cannot be sent without the flag */
   signatureFlag?: boolean;
   requestEds: boolean;
-  /** The uploader's signature class; defaults to the subscriber's class in the store */
+  /** The uploader's signature class; defaults to the subscriber's class in the store. Not used with `signers`. */
   signatureClass?: SignatureClass;
+  /** Users whose verified signatures the upload carries, with their signature classes; defaults to the uploader */
+  signers?: { userId: string; signatureClass: SignatureClass }[];
 }
 
 /** Thrown for admin actions that do not fit the order's current state */
@@ -108,12 +110,19 @@ export function creditTransferProtocolText(store: AppStore, orders: PaymentOrder
  */
 export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUpload): PaymentOrder[] {
   const signatureFlag = upload.signatureFlag ?? upload.requestEds;
-  const subscriberClass = upload.signatureClass ?? store.getSubscriber(upload.partnerId, upload.userId)?.signatureClass ?? 'E';
-  const signatureClass = uploadSignatureClass(signatureFlag, subscriberClass);
-  const decision = uploadDecision({ signatureFlag, requestEds: upload.requestEds, signatureClass });
+  const signers = (
+    upload.signers ?? [
+      {
+        userId: upload.userId,
+        signatureClass: upload.signatureClass ?? store.getSubscriber(upload.partnerId, upload.userId)?.signatureClass ?? 'E',
+      },
+    ]
+  ).map((signer) => ({ userId: signer.userId, signatureClass: uploadSignatureClass(signatureFlag, signer.signatureClass) }));
+  const signerClasses = signers.map((signer) => signer.signatureClass);
+  const decision = uploadDecision({ signatureFlag, requestEds: upload.requestEds, signerClasses });
   if (decision === 'reject') {
     throw new SignatureAuthorisationError(
-      `Unterschriftsklasse ${signatureClass} von ${upload.userId} reicht nicht aus und keine VEU angefordert`,
+      `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus und keine VEU angefordert`,
     );
   }
 
@@ -158,14 +167,16 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
   for (const order of orders) {
     store.appendPaymentStatusEvent({ paymentOrderId: order.id, status: 'ACTC' });
   }
-  // The electronic signature sent with the upload; as a transport signature (T) it does not count in the VEU
-  store.addOrderSignature({
-    partnerId: upload.partnerId,
-    orderId: upload.orderId,
-    userId: upload.userId,
-    kind: 'UPLOAD',
-    signatureClass,
-  });
+  // The electronic signatures sent with the upload; transport signatures (T) do not count in the VEU
+  for (const signer of signers) {
+    store.addOrderSignature({
+      partnerId: upload.partnerId,
+      orderId: upload.orderId,
+      userId: signer.userId,
+      kind: 'UPLOAD',
+      signatureClass: signer.signatureClass,
+    });
+  }
 
   const ctx = orderContext(upload);
   recordEvent(store, ctx, 'FILE_UPLOAD', { reasonCode: 'TS01' });
@@ -175,7 +186,7 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
     recordEvent(store, ctx, 'VEU_FORWARDING', {
       reasonCode: 'DS06',
       additionalInfo: [
-        ...(signatureHold ? [`Unterschriftsklasse ${signatureClass}: weitere Unterschrift erforderlich`] : []),
+        ...(signatureHold ? [`Unterschriftsklasse ${signerClasses.join('+')}: weitere Unterschrift erforderlich`] : []),
         ...(vopHold ? [`Empfaengerueberpruefung ${vopGroup}: Bestaetigung per Unterschrift erforderlich`] : []),
       ],
     });

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestApp, postEbics, PARTNER_ID, USER_ID } from '../helpers/test-server.js';
 import {
+  esSigner,
   buildPain001Document,
   hvdOrderParams,
   hvtOrderParams,
@@ -218,7 +219,7 @@ describe('VEU (distributed electronic signature)', () => {
       await setSignatureClass(ctx, SECOND_USER, 'B');
       const { content, orderId, ref } = await uploadTransfer(ctx, 'HVZ-BB');
 
-      const second = await sendVeuSignature(ctx.signer, 'HVE', ref, { dataDigest: orderDataDigest(content) });
+      const second = await sendVeuSignature(ctx.signer, 'HVE', ref);
       expect(second.code).toBe('000000');
       expect(second.orderId).toMatch(ORDER_ID);
       expect(orderStatuses(orderId)).toEqual(['PENDING_EDS']);
@@ -233,7 +234,7 @@ describe('VEU (distributed electronic signature)', () => {
       expect(localAttribute(await hvzXml(ctx.signer), 'SigningInfo', 'readyToBeSigned')).toBe('false');
       expect((await sendVeuSignature(ctx.signer, 'HVE', ref)).code).toBe('091306');
 
-      const released = await sendVeuSignature(third, 'HVE', ref, { dataDigest: orderDataDigest(content) });
+      const released = await sendVeuSignature(third, 'HVE', ref);
       expect(released.code).toBe('000000');
       expect(orderStatuses(orderId)).toEqual(['EXECUTED']);
       expect(signatures(orderId)).toEqual([[USER_ID, 'UPLOAD', 'B'], [SECOND_USER, 'HVE', 'B'], [THIRD_USER, 'HVE', 'A']]);
@@ -265,7 +266,7 @@ describe('VEU (distributed electronic signature)', () => {
       expect(() => validateXml(hvdXml, 'response')).not.toThrow();
       expect(localTexts(hvdXml, 'SignerInfo')).toEqual([]);
 
-      const released = await sendVeuSignature(ctx.signer, 'HVE', ref, { dataDigest: orderDataDigest(content) });
+      const released = await sendVeuSignature(ctx.signer, 'HVE', ref);
       expect(released.code).toBe('000000');
       expect(orderStatuses(orderId)).toEqual(['EXECUTED']);
       expect(signatures(orderId)).toEqual([[USER_ID, 'UPLOAD', 'T'], [SECOND_USER, 'HVE', 'E']]);
@@ -458,7 +459,7 @@ describe('VEU (distributed electronic signature)', () => {
   describe('HVE', () => {
     it('rejects a second signature by the uploader with 091306', async () => {
       const { content, orderId, ref } = await uploadTransfer(ctx, 'HVE-DUP');
-      const result = await sendVeuSignature(ctx.uploader, 'HVE', ref, { dataDigest: orderDataDigest(content) });
+      const result = await sendVeuSignature(ctx.uploader, 'HVE', ref);
       expect(result.technicalCode).toBe('000000');
       expect(result.code).toBe('091306');
       expect(result.orderId).toBeUndefined();
@@ -469,7 +470,7 @@ describe('VEU (distributed electronic signature)', () => {
     it("releases the order with the second user's signature", async () => {
       const { content, orderId, ref } = await uploadTransfer(ctx, 'HVE', { pmtInfs: 2 });
 
-      const result = await sendVeuSignature(ctx.signer, 'HVE', ref, { dataDigest: orderDataDigest(content) });
+      const result = await sendVeuSignature(ctx.signer, 'HVE', ref);
       expect(result.technicalCode).toBe('000000');
       expect(result.code).toBe('000000');
       expect(result.orderId).toMatch(ORDER_ID);
@@ -511,7 +512,7 @@ describe('VEU (distributed electronic signature)', () => {
       // A class T user is not authorised to sign, so HVZ lists nothing for it (chapter 8.3.1)
       expect((await hvz(ctx.signer)).code).toBe('090005');
 
-      const result = await sendVeuSignature(ctx.signer, 'HVE', ref, { dataDigest: orderDataDigest(content) });
+      const result = await sendVeuSignature(ctx.signer, 'HVE', ref);
       expect(result.technicalCode).toBe('000000');
       expect(result.code).toBe('090003');
       expect(result.orderId).toBeUndefined();
@@ -586,13 +587,15 @@ describe('VEU (distributed electronic signature)', () => {
       expect((await downloadWithOrderParams(ctx.signer, 'HVD', hvdOrderParams({ ...ref, orderId: UNKNOWN_ORDER_ID }))).code).toBe('091114');
     });
 
-    it('HVE and HVS: 091114, 091120, 091304 for foreign signature data and 091111 for undecodable signature data', async () => {
+    it('HVE and HVS: 091114 and 091120 for foreign orders, 091304, 091120 and 091301 for foreign signature data and 091111 for undecodable signature data', async () => {
       const { orderId, ref } = await uploadTransfer(ctx, 'ERR-SIG');
       for (const orderType of ['HVE', 'HVS'] as const) {
         expect((await sendVeuSignature(ctx.signer, orderType, { ...ref, orderId: UNKNOWN_ORDER_ID })).code, orderType).toBe('091114');
         expect((await sendVeuSignature(ctx.signer, orderType, { ...ref, partnerId: OTHER_PARTNER })).code, orderType).toBe('091120');
-        expect((await sendVeuSignature(ctx.signer, orderType, ref, { signer: { partnerId: PARTNER_ID, userId: USER_ID } })).code, orderType).toBe('091304');
-        expect((await sendVeuSignature(ctx.signer, orderType, ref, { signer: { partnerId: OTHER_PARTNER, userId: SECOND_USER } })).code, orderType).toBe('091304');
+        expect((await sendVeuSignature(ctx.signer, orderType, ref, { signatures: esSigner(PARTNER_ID, 'NOBODY', ctx.signer.keys) })).code, orderType).toBe('091304');
+        expect((await sendVeuSignature(ctx.signer, orderType, ref, { signatures: esSigner(OTHER_PARTNER, SECOND_USER, ctx.signer.keys) })).code, orderType).toBe('091120');
+        // USER1's name with USER2's signature key
+        expect((await sendVeuSignature(ctx.signer, orderType, ref, { signatures: esSigner(PARTNER_ID, USER_ID, ctx.signer.keys) })).code, orderType).toBe('091301');
         expect((await sendVeuSignature(ctx.signer, orderType, ref, { compressSignatureData: false })).code, orderType).toBe('091111');
       }
       expect(orderStatuses(orderId)).toEqual(['PENDING_EDS']);

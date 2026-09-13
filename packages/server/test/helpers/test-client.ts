@@ -1,4 +1,4 @@
-import { generateKeyPairSync, createHash, createSign, privateDecrypt, createDecipheriv, createCipheriv, publicEncrypt, randomBytes, constants } from 'node:crypto';
+import { generateKeyPairSync, createHash, createSign, privateDecrypt, createDecipheriv, createCipheriv, publicEncrypt, randomBytes, sign, constants } from 'node:crypto';
 import { deflateSync, inflateSync } from 'node:zlib';
 import forge from 'node-forge';
 import { DOMParser } from '@xmldom/xmldom';
@@ -73,6 +73,7 @@ export function buildIniRequest(
   partnerId: string,
   userId: string,
   keys: TestClientKeys,
+  signatureVersion: SignatureVersion = 'A006',
 ): string {
   const orderData = `<?xml version="1.0" encoding="UTF-8"?>
 <SignaturePubKeyOrderData xmlns="http://www.ebics.org/S002"
@@ -81,7 +82,7 @@ export function buildIniRequest(
     <ds:X509Data>
       <ds:X509Certificate>${certToBase64(keys.signatureCert)}</ds:X509Certificate>
     </ds:X509Data>
-    <SignatureVersion>A006</SignatureVersion>
+    <SignatureVersion>${signatureVersion}</SignatureVersion>
   </SignaturePubKeyInfo>
   <PartnerID>${partnerId}</PartnerID>
   <UserID>${userId}</UserID>
@@ -338,11 +339,69 @@ export interface EncryptedUpload {
   signatureDataB64: string;
 }
 
+// Electronic signatures (EUs)
+
+export type SignatureVersion = 'A005' | 'A006';
+
+/** A subscriber placing an electronic signature with a private signature key */
+export interface EsSigner {
+  partnerId: string;
+  userId: string;
+  privateKey: string;
+  /** Defaults to A006 */
+  signatureVersion?: SignatureVersion;
+}
+
+/** The subscriber signing with its own signature key */
+export function esSigner(partnerId: string, userId: string, keys: TestClientKeys, signatureVersion?: SignatureVersion): EsSigner {
+  return { partnerId, userId, privateKey: keys.signatureKeyPair.privateKey, signatureVersion };
+}
+
+/** Order data as signed with A005/A006: CR, LF and Ctrl-Z are not part of the signed data (EBICS 3.0.2 chapter 14) */
+function esSignedContent(data: string | Buffer): Buffer {
+  const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8');
+  return Buffer.from(bytes.filter((byte) => byte !== 0x0d && byte !== 0x0a && byte !== 0x1a));
+}
+
+/** SHA-256 hash of the signed order data, as sent in DataDigest */
+export function esOrderDataHash(data: string | Buffer): Buffer {
+  return createHash('sha256').update(esSignedContent(data)).digest();
+}
+
+/**
+ * Signature value (base64) over order data (chapter 14.1.4): A006 is EMSA-PSS with SHA-256, MGF1 and a 32 byte salt
+ * over the SHA-256 hash of the data, A005 is EMSA-PKCS1-v1_5 with SHA-256 over the data.
+ */
+export function signOrderData(data: string | Buffer, privateKeyPem: string, signatureVersion: SignatureVersion = 'A006'): string {
+  if (signatureVersion === 'A005') {
+    return sign('sha256', esSignedContent(data), { key: privateKeyPem, padding: constants.RSA_PKCS1_PADDING }).toString('base64');
+  }
+  return sign('sha256', esOrderDataHash(data), { key: privateKeyPem, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32 }).toString('base64');
+}
+
+/** UserSignatureData (ebics_signature_S002.xsd) with one OrderSignatureData per signer over the order data */
+export function buildUserSignatureData(data: string | Buffer, signers: EsSigner[]): string {
+  const signatures = signers
+    .map((signer) => {
+      const version = signer.signatureVersion ?? 'A006';
+      return `<OrderSignatureData><SignatureVersion>${version}</SignatureVersion><SignatureValue>${signOrderData(data, signer.privateKey, version)}</SignatureValue><PartnerID>${signer.partnerId}</PartnerID><UserID>${signer.userId}</UserID></OrderSignatureData>`;
+    })
+    .join('');
+  return `<?xml version="1.0" encoding="UTF-8"?><UserSignatureData xmlns="http://www.ebics.org/S002">${signatures}</UserSignatureData>`;
+}
+
+/** The EUs of a request: signers signing the order data, or a prepared UserSignatureData document */
+export type EsSignatures = EsSigner | EsSigner[] | { signatureDataXml: string };
+
+function userSignatureDataXml(data: string | Buffer, signatures: EsSignatures): string {
+  if ('signatureDataXml' in signatures) return signatures.signatureDataXml;
+  return buildUserSignatureData(data, Array.isArray(signatures) ? signatures : [signatures]);
+}
+
 export function encryptUploadContent(
   content: string,
   bankEncPubKeyPem: string,
-  partnerId: string,
-  userId: string,
+  signatures: EsSignatures,
 ): EncryptedUpload {
   const compressed = deflateSync(Buffer.from(content, 'utf8'));
   const txKey = randomBytes(16);
@@ -362,10 +421,9 @@ export function encryptUploadContent(
     txKey,
   ).toString('base64');
 
-  const dataDigest = createHash('sha256').update(compressed).digest('base64');
+  const dataDigest = esOrderDataHash(content).toString('base64');
 
-  // Build minimal UserSignatureData XML
-  const sigXml = `<?xml version="1.0" encoding="UTF-8"?><UserSignatureData xmlns="http://www.ebics.org/S002"><OrderSignatureData><SignatureVersion>A006</SignatureVersion><SignatureValue>${randomBytes(32).toString('base64')}</SignatureValue><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID></OrderSignatureData></UserSignatureData>`;
+  const sigXml = userSignatureDataXml(content, signatures);
   const sigCompressed = deflateSync(Buffer.from(sigXml, 'utf8'));
   const sigCipher = createCipheriv('aes-128-cbc', txKey, iv);
   const sigEncrypted = Buffer.concat([sigCipher.update(sigCompressed), sigCipher.final()]);
@@ -642,16 +700,15 @@ export function buildEbicsOrderParamsDownloadInitRequest(
 }
 
 /**
- * Encrypted UserSignatureData naming the signer, like encryptUploadContent but without order data.
+ * Encrypted UserSignatureData, like encryptUploadContent but without order data.
  * `compress: false` skips the deflate step, so the bank can decrypt but not inflate the data.
  */
 export function encryptSignatureData(
   bankEncPubKeyPem: string,
-  signer: { partnerId: string; userId: string },
+  sigXml: string,
   options: { compress?: boolean } = {},
 ): { wrappedKey: string; signatureDataB64: string } {
   const txKey = randomBytes(16);
-  const sigXml = `<?xml version="1.0" encoding="UTF-8"?><UserSignatureData xmlns="http://www.ebics.org/S002"><OrderSignatureData><SignatureVersion>A006</SignatureVersion><SignatureValue>${randomBytes(32).toString('base64')}</SignatureValue><PartnerID>${signer.partnerId}</PartnerID><UserID>${signer.userId}</UserID></OrderSignatureData></UserSignatureData>`;
   const cipher = createCipheriv('aes-128-cbc', txKey, Buffer.alloc(16, 0));
   const plain = Buffer.from(sigXml, 'utf8');
   const signatureDataB64 = Buffer.concat([cipher.update(options.compress === false ? plain : deflateSync(plain)), cipher.final()]).toString('base64');
@@ -660,9 +717,11 @@ export function encryptSignatureData(
 }
 
 export interface VeuSignatureOptions {
-  /** Signer named in the UserSignatureData; defaults to the requesting subscriber */
-  signer?: { partnerId: string; userId: string };
-  /** DataDigest sent in the body; defaults to random bytes */
+  /** Order data waiting in the VEU, signed by the EUs */
+  orderData?: string;
+  /** EUs in the UserSignatureData; defaults to the requesting subscriber signing orderData with its signature key */
+  signatures?: EsSignatures;
+  /** DataDigest sent in the body; empty by default, as HVE and HVS carry no order data (EBICS 3.0.2 chapter 8.3.4.1) */
   dataDigest?: string;
   /** false sends signature data that is encrypted but not deflated (undecodable for the bank) */
   compressSignatureData?: boolean;
@@ -670,7 +729,7 @@ export interface VeuSignatureOptions {
 
 /**
  * HVE (sign) or HVS (cancel) request: HV*OrderParams, NumSegments 0 and a body with only
- * DataEncryptionInfo, SignatureData and DataDigest. The signer defaults to the requesting subscriber.
+ * DataEncryptionInfo, SignatureData and DataDigest. The EU defaults to the requesting subscriber's.
  */
 export function buildEbicsVeuSignatureRequest(
   hostId: string,
@@ -687,8 +746,10 @@ export function buildEbicsVeuSignatureRequest(
   const timestamp = new Date().toISOString();
   const authDigest = computeCertDigest(bankCerts.authCertPem);
   const encDigest = computeCertDigest(bankCerts.encCertPem);
-  const signature = encryptSignatureData(bankEncPubKeyPem, options.signer ?? { partnerId, userId }, { compress: options.compressSignatureData });
-  const dataDigest = options.dataDigest ?? randomBytes(32).toString('base64');
+  const orderData = options.orderData ?? '';
+  const sigXml = userSignatureDataXml(orderData, options.signatures ?? esSigner(partnerId, userId, keys));
+  const signature = encryptSignatureData(bankEncPubKeyPem, sigXml, { compress: options.compressSignatureData });
+  const dataDigest = options.dataDigest ?? '';
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>${orderType}</AdminOrderType><${orderType}OrderParams xmlns="urn:org:ebics:H005">${hvRequestStructure(ref)}</${orderType}OrderParams></OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0200</SecurityMedium><NumSegments>0</NumSegments></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body><DataTransfer><DataEncryptionInfo authenticate="true"><EncryptionPubKeyDigest Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</EncryptionPubKeyDigest><TransactionKey>${signature.wrappedKey}</TransactionKey></DataEncryptionInfo><SignatureData authenticate="true">${signature.signatureDataB64}</SignatureData><DataDigest SignatureVersion="A006">${dataDigest}</DataDigest></DataTransfer></body></ebicsRequest>`;
 

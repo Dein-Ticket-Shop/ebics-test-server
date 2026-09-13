@@ -148,15 +148,27 @@ describe('signature classes (Unterschriftsklassen)', () => {
     ] as [boolean, boolean, SignatureClass, UploadDecision][])(
       'signatureFlag=%s requestEds=%s class %s → %s',
       (signatureFlag, requestEds, signatureClass, expected) => {
-        expect(uploadDecision({ signatureFlag, requestEds, signatureClass })).toBe(expected);
+        expect(uploadDecision({ signatureFlag, requestEds, signerClasses: [signatureClass] })).toBe(expected);
       },
     );
 
     it('executes uploads without SignatureFlag once the class is derived with uploadSignatureClass', () => {
       for (const subscriberClass of CLASSES) {
         const signatureClass = uploadSignatureClass(false, subscriberClass);
-        expect(uploadDecision({ signatureFlag: false, requestEds: false, signatureClass }), subscriberClass).toBe('execute');
+        expect(uploadDecision({ signatureFlag: false, requestEds: false, signerClasses: [signatureClass] }), subscriberClass).toBe('execute');
       }
+    });
+
+    // Several EUs in one upload (chapter 11.2.3): together they authorise like VEU signatures
+    it.each([
+      [["A", "B"], "execute"],
+      [["A", "A"], "execute"],
+      [["B", "B"], "veu"],
+      [["A", "T"], "veu"],
+      [["E", "T"], "execute"],
+      [[], "veu"],
+    ] as [SignatureClass[], UploadDecision][])("signatureFlag with requestEDS and signer classes %j → %s", (signerClasses, expected) => {
+      expect(uploadDecision({ signatureFlag: true, requestEds: true, signerClasses })).toBe(expected);
     });
   });
 });

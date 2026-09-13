@@ -12,11 +12,15 @@ import {
   buildEbicsVeuSignatureRequest,
   decryptDownloadResponseBytes,
   encryptUploadContent,
+  esSigner,
   readBusinessReturnCode,
   readOrderId,
   type BankCerts,
   type DateRange,
   type DownloadParams,
+  type EsSignatures,
+  type EsSigner,
+  type SignatureVersion,
   type TestClientKeys,
   type UploadOptions,
   type VeuOrderRef,
@@ -24,6 +28,7 @@ import {
 } from './test-client.js';
 import { parseXml, xpathSelect, xpathString } from '../../src/protocol/xml-parser.js';
 import { extractPublicKeyFromCertBase64 } from '../../src/protocol/xml-signature.js';
+import { getVeuOrder } from '../../src/banking/veu.js';
 import type { AppStore, SignatureClass } from '../../src/store/types.js';
 
 /** Posts an EBICS request and returns the response body */
@@ -45,6 +50,7 @@ export interface EbicsSession {
 /**
  * Creates the subscriber if needed, sends INI and HIA, activates it and fetches the bank keys (HPB).
  * `signatureClass` sets the subscriber's signature class; otherwise the stored class (default E) is kept.
+ * `signatureVersion` is the version of the signature key sent with INI (default A006).
  */
 export async function enrolSubscriber(options: {
   post: PostXml;
@@ -53,12 +59,13 @@ export async function enrolSubscriber(options: {
   partnerId: string;
   userId: string;
   signatureClass?: SignatureClass;
+  signatureVersion?: SignatureVersion;
 }): Promise<EbicsSession> {
   const { post, store, partnerId, userId } = options;
   const keys = generateTestClientKeys();
   if (!store.getSubscriber(partnerId, userId)) store.createSubscriber(partnerId, userId);
   if (options.signatureClass) store.updateSubscriberSettings(partnerId, userId, { signatureClass: options.signatureClass });
-  const iniBody = await post(buildIniRequest(HOST_ID, partnerId, userId, keys));
+  const iniBody = await post(buildIniRequest(HOST_ID, partnerId, userId, keys, options.signatureVersion));
   const hiaBody = await post(buildHiaRequest(HOST_ID, partnerId, userId, keys));
   await options.activate(partnerId, userId);
   await post(buildHpbRequest(HOST_ID, partnerId, userId, keys));
@@ -71,15 +78,20 @@ export async function enrolSubscriber(options: {
   return { post, store, partnerId, userId, keys, bankCerts, bankEncPubKey, iniBody, hiaBody };
 }
 
+/** The session's subscriber signing with its own signature key */
+export function sessionSigner(session: EbicsSession, signatureVersion?: SignatureVersion): EsSigner {
+  return esSigner(session.partnerId, session.userId, session.keys, signatureVersion);
+}
+
 export const SCI_UPLOAD: UploadOptions = { scope: 'DE', serviceOption: 'VOI', requestEds: true };
 
-/** BTU upload (Initialisation plus all Transfer segments) */
+/** BTU upload (Initialisation plus all Transfer segments); the EU defaults to the uploading subscriber's */
 export async function uploadOrder(
   session: EbicsSession,
   content: string,
-  options: { serviceName?: string; msgName?: string; upload?: UploadOptions } = {},
+  options: { serviceName?: string; msgName?: string; upload?: UploadOptions; signatures?: EsSignatures } = {},
 ): Promise<{ initBody: string; transferBody: string; transactionId: string; orderId?: string }> {
-  const enc = encryptUploadContent(content, session.bankEncPubKey, session.partnerId, session.userId);
+  const enc = encryptUploadContent(content, session.bankEncPubKey, options.signatures ?? sessionSigner(session));
   const initBody = await session.post(
     buildEbicsUploadInitRequest(
       HOST_ID, session.partnerId, session.userId, session.keys, session.bankCerts,
@@ -130,15 +142,22 @@ export function sendReceipt(session: EbicsSession, transactionId: string, code: 
   return session.post(buildEbicsReceiptRequest(HOST_ID, session.keys, transactionId, code));
 }
 
-/** HVE or HVS; returns the business return code and the OrderID of the HVE/HVS */
+/**
+ * HVE or HVS; returns the business return code and the OrderID of the HVE/HVS. The EUs sign the order data waiting
+ * in the VEU unless `options.orderData` is given.
+ */
 export async function sendVeuSignature(
   session: EbicsSession,
   orderType: 'HVE' | 'HVS',
   ref: VeuOrderRef,
   options: VeuSignatureOptions = {},
 ): Promise<{ code?: string; technicalCode?: string; orderId?: string; body: string }> {
+  const orderData = options.orderData ?? getVeuOrder(session.store, ref.partnerId, ref.orderId)?.rawContent;
   const body = await session.post(
-    buildEbicsVeuSignatureRequest(HOST_ID, session.partnerId, session.userId, session.keys, session.bankCerts, orderType, ref, session.bankEncPubKey, options),
+    buildEbicsVeuSignatureRequest(HOST_ID, session.partnerId, session.userId, session.keys, session.bankCerts, orderType, ref, session.bankEncPubKey, {
+      ...options,
+      orderData,
+    }),
   );
   const technicalCode = xpathString('//ebics:header/ebics:mutable/ebics:ReturnCode/text()', parseXml(body));
   return { code: readBusinessReturnCode(body), technicalCode, orderId: readOrderId(body), body };

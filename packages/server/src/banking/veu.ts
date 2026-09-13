@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { orderDataHash } from './electronic-signatures.js';
 import type { AppStore, OrderSignature, PaymentOrder, SignatureClass } from '../store/types.js';
 import { ReturnCode } from '../protocol/return-codes.js';
 import { cancelPaymentOrder, releasePaymentOrder } from './payments.js';
@@ -23,7 +23,7 @@ export interface VeuOrder {
   vopConfirmed: boolean;
   /** The uploaded pain.001 file */
   rawContent: string;
-  /** A006 DataDigest: base64 SHA-256 of the order data without line breaks */
+  /** A006 DataDigest: base64 SHA-256 of the order data without CR, LF and Ctrl-Z */
   dataDigest: string;
 }
 
@@ -37,8 +37,9 @@ export class VeuError extends Error {
   }
 }
 
+/** A006 DataDigest: SHA-256 of the order data without CR, LF and Ctrl-Z (EBICS 3.0.2 chapter 14), base64 */
 export function orderDataDigest(rawContent: string): string {
-  return createHash('sha256').update(rawContent.replace(/\r?\n/g, '')).digest('base64');
+  return orderDataHash(rawContent).toString('base64');
 }
 
 function toVeuOrder(store: AppStore, orders: PaymentOrder[]): VeuOrder {
@@ -127,25 +128,32 @@ function requireSignatureClass(store: AppStore, request: { partnerId: string; us
 }
 
 /**
- * Adds an electronic signature (HVE, or the bank-side VEU UI). The order is executed as soon as the signatures
- * authorise it and a required VoP confirmation is present. Returns the OrderID of the HVE.
+ * Adds electronic signatures (HVE, or the bank-side VEU UI) of one or several users. Every signer needs class E, A or
+ * B and may not have signed yet; nothing is recorded when one of them fails. The order is executed as soon as the
+ * signatures authorise it and a required VoP confirmation is present. Returns the OrderID of the HVE.
  */
 export function signVeuOrder(
   store: AppStore,
-  request: { partnerId: string; orderId: string; userId: string },
+  request: { partnerId: string; orderId: string; userId: string | string[] },
 ): { orderId: string; released: boolean } {
   const veu = requireVeuOrder(store, request.partnerId, request.orderId);
-  const signatureClass = requireSignatureClass(store, request);
-  if (!canSign(veu, { userId: request.userId, signatureClass })) {
-    throw new VeuError(ReturnCode.EBICS_DUPLICATE_SIGNATURE, `User ${request.userId} already signed order ${request.orderId}`);
-  }
+  const userIds = Array.isArray(request.userId) ? request.userId : [request.userId];
+  const signers = userIds.map((userId) => {
+    const signatureClass = requireSignatureClass(store, { partnerId: request.partnerId, userId });
+    if (!canSign(veu, { userId, signatureClass })) {
+      throw new VeuError(ReturnCode.EBICS_DUPLICATE_SIGNATURE, `User ${userId} already signed order ${request.orderId}`);
+    }
+    return { userId, signatureClass };
+  });
 
   const hveOrderId = store.nextOrderId(request.partnerId);
-  store.addOrderSignature({ ...request, kind: 'HVE', signatureClass });
-  const ctx = { partnerId: request.partnerId, userId: request.userId, orderId: hveOrderId, adminOrderType: 'HVE' };
   const reference = { orderIdRef: request.orderId, adminOrderTypeRef: 'BTU' };
-  recordEvent(store, ctx, 'ES_UPLOAD', { reasonCode: 'TS01', ...reference });
-  recordEvent(store, ctx, 'ES_VERIFICATION', { reasonCode: 'DS01', ...reference });
+  signers.forEach((signer, index) => {
+    store.addOrderSignature({ partnerId: request.partnerId, orderId: request.orderId, userId: signer.userId, kind: 'HVE', signatureClass: signer.signatureClass });
+    const ctx = { partnerId: request.partnerId, userId: signer.userId, orderId: hveOrderId, adminOrderType: 'HVE' };
+    if (index === 0) recordEvent(store, ctx, 'ES_UPLOAD', { reasonCode: 'TS01', ...reference });
+    recordEvent(store, ctx, 'ES_VERIFICATION', { reasonCode: 'DS01', ...reference });
+  });
 
   const signed = requireVeuOrder(store, request.partnerId, request.orderId);
   if (!isReleasable(signed)) return { orderId: hveOrderId, released: false };
@@ -153,15 +161,24 @@ export function signVeuOrder(
   return { orderId: hveOrderId, released: true };
 }
 
-/** Cancels the order in the VEU on behalf of a user (HVS, or the bank-side VEU UI). Returns the OrderID of the HVS. */
+/**
+ * Cancels the order in the VEU (HVS, or the bank-side VEU UI). A cancellation needs one signature of class E, A or B
+ * (chapter 8.3); with several signers the first such signer cancels. Returns the OrderID of the HVS.
+ */
 export function cancelVeuOrder(
   store: AppStore,
-  request: { partnerId: string; orderId: string; userId: string },
+  request: { partnerId: string; orderId: string; userId: string | string[] },
   additionalInfo: string[] = [],
 ): { orderId: string } {
   const veu = requireVeuOrder(store, request.partnerId, request.orderId);
-  requireSignatureClass(store, request);
+  const userIds = Array.isArray(request.userId) ? request.userId : [request.userId];
+  const canceller =
+    userIds.find((userId) => {
+      const subscriber = store.getSubscriber(request.partnerId, userId);
+      return subscriber !== undefined && isBankTechnical(subscriber.signatureClass);
+    }) ?? userIds[0]!;
+  requireSignatureClass(store, { partnerId: request.partnerId, userId: canceller });
   const hvsOrderId = store.nextOrderId(request.partnerId);
-  cancelPaymentOrder(store, veu.orders[0]!.id, additionalInfo, { userId: request.userId, orderId: hvsOrderId });
+  cancelPaymentOrder(store, veu.orders[0]!.id, additionalInfo, { userId: canceller, orderId: hvsOrderId });
   return { orderId: hvsOrderId };
 }

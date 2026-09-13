@@ -16,7 +16,8 @@ inspect every request and response.
 - Payment processing: parses pain.001 credit transfers and pain.008 direct debits
 - SEPA Instant uploads (BTU SCI pain.001) as payment orders with Verification of Payee and a payment status history
 - Signature classes per subscriber (E, A, B, T): uploads by a user whose class does not authorise the order alone wait in the VEU when they request a distributed signature (otherwise `090003`), until users with class E, A or B sign or an admin releases, cancels or rejects them. Class T is a technical user that can only submit orders
-- VEU order types HVU, HVZ (both with ServiceFilter), HVD, HVT (complete order data or single order details with fetchLimit/fetchOffset), HVE and HVS to list, inspect, sign and cancel held orders (signatures are parsed, not cryptographically verified)
+- VEU order types HVU, HVZ (both with ServiceFilter), HVD, HVT (complete order data or single order details with fetchLimit/fetchOffset), HVE and HVS to list, inspect, sign and cancel held orders
+- Electronic signatures (A005, A006) of uploads, HVE, HVS, PUB, HCA and HCS are verified against the registered signature keys; refused EUs return `091111`, `091120`, `091301`, `091304`, `091305` or `091306` with the matching HAC reason code
 - Optional VoP confirmation: credit transfers without a full payee match (RCVC) wait for an HVE signature or an admin release
 - EBICS OrderIDs on uploads and INI/HIA, echoed in every response of the transaction
 - Statement generation: camt.053 and MT940

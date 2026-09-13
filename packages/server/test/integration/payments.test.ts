@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestApp, postEbics, HOST_ID, PARTNER_ID, USER_ID } from '../helpers/test-server.js';
 import {
+  esSigner,
   generateTestClientKeys,
   buildIniRequest,
   buildHiaRequest,
@@ -82,7 +83,7 @@ async function setup(): Promise<Ctx> {
 }
 
 async function upload(ctx: Ctx, content: string, options: UploadOptions = SCI, serviceName = 'SCI') {
-  const enc = encryptUploadContent(content, ctx.bankEncPubKey, PARTNER_ID, USER_ID);
+  const enc = encryptUploadContent(content, ctx.bankEncPubKey, esSigner(PARTNER_ID, USER_ID, ctx.keys));
   const initBody = await (
     await postEbics(ctx.app, buildEbicsUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, ctx.keys, ctx.bankCerts, serviceName, 'pain.001', enc, options))
   ).text();

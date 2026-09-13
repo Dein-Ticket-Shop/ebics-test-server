@@ -6,6 +6,7 @@ import { OrderDataError, OrderAuthError, SignatureAuthorisationError } from '../
 import { directDebitProtocolText, receiveCreditTransfers } from '../banking/payments.js';
 import { recordUploadCompleted, recordUploadRejected, type OrderContext } from '../banking/order-events.js';
 import { uploadDecision, uploadSignatureClass } from '../banking/signatures.js';
+import { SignatureCheckError, decryptSignatureData, verifyUserSignatureData } from '../banking/electronic-signatures.js';
 import { logError } from '../logger.js';
 
 /** Upload transaction attributes the order lifecycle needs (set by the dispatcher) */
@@ -16,6 +17,12 @@ export interface BtuOrderContext {
   signatureFlag?: boolean;
   /** BTUOrderParams/SignatureFlag/@requestEDS */
   requestEds?: boolean;
+  /**
+   * SignatureData of the upload (encrypted) with the wrapped transaction key. When given, every electronic signature
+   * is verified against the order data and the verified signers authorise the order; without it (direct calls in
+   * tests) the uploader counts as the only signer.
+   */
+  signature?: { signatureData?: string; transactionKey: string; bankEncryptionPrivateKey: string };
 }
 
 export function handleBtu(
@@ -50,12 +57,24 @@ export function handleBtu(
 
   const signatureFlag = context.signatureFlag ?? false;
   const requestEds = context.requestEds ?? false;
-  const signatureClass = uploadSignatureClass(signatureFlag, subscriber.signatureClass);
 
   try {
-    if (uploadDecision({ signatureFlag, requestEds, signatureClass }) === 'reject') {
+    const signers = context.signature
+      ? verifyUserSignatureData(store, {
+          partnerId: subscriber.partnerId,
+          signatureDataXml: decryptSignatureData(
+            context.signature.signatureData ?? '',
+            context.signature.transactionKey,
+            context.signature.bankEncryptionPrivateKey,
+          ),
+          data: rawContent,
+        }).map((signer) => ({ userId: signer.userId, signatureClass: signer.subscriber.signatureClass }))
+      : [{ userId: subscriber.userId, signatureClass: subscriber.signatureClass }];
+    const signerClasses = signers.map((signer) => uploadSignatureClass(signatureFlag, signer.signatureClass));
+
+    if (uploadDecision({ signatureFlag, requestEds, signerClasses }) === 'reject') {
       throw new SignatureAuthorisationError(
-        `Unterschriftsklasse ${signatureClass} von ${subscriber.userId} reicht nicht aus und keine VEU angefordert`,
+        `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus und keine VEU angefordert`,
       );
     }
     if (msgName === 'pain.001') {
@@ -72,7 +91,7 @@ export function handleBtu(
           msgName,
           signatureFlag,
           requestEds,
-          signatureClass: subscriber.signatureClass,
+          signers,
         });
       } else {
         processPain001(rawContent, store, subscriber.partnerId);
@@ -89,8 +108,13 @@ export function handleBtu(
     // best-effort — upload is still stored, left unprocessed
     logError(`${msgName ?? serviceName} processing`, err);
     if (events) {
-      const reasonCode = err instanceof SignatureAuthorisationError ? 'DS19' : 'TD03';
+      const reasonCode =
+        err instanceof SignatureCheckError ? err.reasonCode : err instanceof SignatureAuthorisationError ? 'DS19' : 'TD03';
       recordUploadRejected(store, events, err instanceof Error ? err.message : String(err), reasonCode);
+    }
+    // Electronic signature not verifiable (chapter 5.3): the return code of the failed check
+    if (err instanceof SignatureCheckError) {
+      return err.returnCode;
     }
     // Malformed IBAN/BIC under strict validation: bounce the file like a real bank.
     if (err instanceof OrderDataError) {

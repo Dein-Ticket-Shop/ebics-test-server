@@ -3,6 +3,7 @@ import { privateDecrypt, createDecipheriv, constants } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
 import { createTestApp, postEbics, HOST_ID, PARTNER_ID, USER_ID } from '../helpers/test-server.js';
 import {
+  esSigner,
   generateTestClientKeys,
   buildIniRequest,
   buildHiaRequest,
@@ -65,7 +66,7 @@ describe('Uploads', () => {
     it('should upload and store content via BTU', async () => {
       const testContent = 'Hello from upload test!';
       const bankEncPubKey = getBankEncPubKey(store);
-      const enc = encryptUploadContent(testContent, bankEncPubKey, PARTNER_ID, USER_ID);
+      const enc = encryptUploadContent(testContent, bankEncPubKey, esSigner(PARTNER_ID, USER_ID, clientKeys));
 
       // Init
       const initRes = await postEbics(
@@ -106,7 +107,7 @@ describe('Uploads', () => {
     it('should handle multi-segment BTU upload', async () => {
       const bigContent = 'X'.repeat(50) + Array.from({ length: 500 }, (_, i) => `Line ${i}: ${Math.random().toString(36)}`).join('\n');
       const bankEncPubKey = getBankEncPubKey(store);
-      const enc = encryptUploadContent(bigContent, bankEncPubKey, PARTNER_ID, USER_ID);
+      const enc = encryptUploadContent(bigContent, bankEncPubKey, esSigner(PARTNER_ID, USER_ID, clientKeys));
 
       const initRes = await postEbics(
         app,
@@ -142,7 +143,7 @@ describe('Uploads', () => {
     it('should list uploaded orders', async () => {
       const testContent = 'admin test content';
       const bankEncPubKey = getBankEncPubKey(store);
-      const enc = encryptUploadContent(testContent, bankEncPubKey, PARTNER_ID, USER_ID);
+      const enc = encryptUploadContent(testContent, bankEncPubKey, esSigner(PARTNER_ID, USER_ID, clientKeys));
 
       const initRes = await postEbics(app, buildEbicsUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SCT', 'pain.001', enc));
       const initDoc = parseXml(await initRes.text());
@@ -160,7 +161,7 @@ describe('Uploads', () => {
   describe('Transaction lifecycle', () => {
     it('should clean up transaction after receipt', async () => {
       const bankEncPubKey = getBankEncPubKey(store);
-      const enc = encryptUploadContent('cleanup test', bankEncPubKey, PARTNER_ID, USER_ID);
+      const enc = encryptUploadContent('cleanup test', bankEncPubKey, esSigner(PARTNER_ID, USER_ID, clientKeys));
 
       const initRes = await postEbics(app, buildEbicsUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SCT', 'pain.001', enc));
       const initDoc = parseXml(await initRes.text());
@@ -224,7 +225,7 @@ describe('Uploads', () => {
 </Document>`;
 
       const bankEncPubKey = getBankEncPubKey(store);
-      const enc = encryptUploadContent(pain001, bankEncPubKey, PARTNER_ID, USER_ID);
+      const enc = encryptUploadContent(pain001, bankEncPubKey, esSigner(PARTNER_ID, USER_ID, clientKeys));
 
       const initRes = await postEbics(app, buildEbicsUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SCT', 'pain.001', enc));
       const initDoc = parseXml(await initRes.text());
@@ -248,7 +249,7 @@ describe('Uploads', () => {
 
       const pain001 = buildPain001(foreignIban, calculateIban('10020030', '8888888888'), '100.00');
       const bankEncPubKey = getBankEncPubKey(store);
-      const enc = encryptUploadContent(pain001, bankEncPubKey, PARTNER_ID, USER_ID);
+      const enc = encryptUploadContent(pain001, bankEncPubKey, esSigner(PARTNER_ID, USER_ID, clientKeys));
 
       const initRes = await postEbics(app, buildEbicsUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SCT', 'pain.001', enc));
       const txId = xpathString('//ebics:TransactionID/text()', parseXml(await initRes.text()))!;
@@ -271,7 +272,7 @@ describe('Uploads', () => {
 
       const pain001 = buildPain001(strangerIban, calculateIban('10020030', '8888888888'), '100.00');
       const bankEncPubKey = getBankEncPubKey(store);
-      const enc = encryptUploadContent(pain001, bankEncPubKey, PARTNER_ID, USER_ID);
+      const enc = encryptUploadContent(pain001, bankEncPubKey, esSigner(PARTNER_ID, USER_ID, clientKeys));
 
       const initRes = await postEbics(app, buildEbicsUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SCT', 'pain.001', enc));
       const txId = xpathString('//ebics:TransactionID/text()', parseXml(await initRes.text()))!;

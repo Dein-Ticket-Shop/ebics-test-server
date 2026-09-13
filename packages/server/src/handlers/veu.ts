@@ -7,7 +7,7 @@ import { EBICS_NS } from '../protocol/constants.js';
 import { parseXml, xpathSelect, xpathString, type XmlDocument } from '../protocol/xml-parser.js';
 import { ReturnCode } from '../protocol/return-codes.js';
 import { buildEbicsResponse } from '../protocol/xml-builder.js';
-import { decryptUpload } from '../protocol/upload-pipeline.js';
+import { SignatureCheckError, decryptSignatureData, verifyUserSignatureData } from '../banking/electronic-signatures.js';
 import { generateTransactionId } from '../protocol/crypto.js';
 import {
   VeuError,
@@ -303,15 +303,10 @@ function hvtOrderDetails(veu: VeuOrder, fetchLimit: number, fetchOffset: number)
   return root.end({ prettyPrint: true });
 }
 
-function localText(doc: XmlDocument, name: string): string | undefined {
-  const node = (xpathSelect(`//*[local-name()='${name}']`, doc) as Node[])[0];
-  return node?.textContent?.trim() || undefined;
-}
-
 /**
- * HVE (sign) and HVS (cancel): the request carries only the encrypted UserSignatureData (NumSegments 0)
- * and is processed at once. The signer in the signature data must be the requesting subscriber.
- * Signature values are parsed but not cryptographically verified, like uploads.
+ * HVE (sign) and HVS (cancel): the request carries only the encrypted UserSignatureData (NumSegments 0) and is
+ * processed at once. Every EU signs the order data waiting in the VEU and must come from the customer of the request
+ * (chapters 7 and 8.3.4/8.3.5); the verified signers sign or cancel the order.
  */
 export function processVeuSignature(
   ctx: HandlerContext,
@@ -337,22 +332,17 @@ export function processVeuSignature(
     const signatureData = xpathString('//ebics:body/ebics:DataTransfer/ebics:SignatureData/text()', ctx.doc);
     if (!wrappedKey || !signatureData) return respond(ReturnCode.EBICS_INVALID_REQUEST_CONTENT);
 
-    let signer: { partnerId?: string; userId?: string };
-    try {
-      const signatureDoc = parseXml(decryptUpload([signatureData], wrappedKey, hostConfig.bankKeys.encryptionPrivateKey));
-      signer = { partnerId: localText(signatureDoc, 'PartnerID'), userId: localText(signatureDoc, 'UserID') };
-    } catch {
-      return respond(ReturnCode.EBICS_INVALID_SIGNATURE_FILE_FORMAT);
-    }
-    if (signer.partnerId !== subscriber.partnerId || signer.userId !== subscriber.userId) {
-      return respond(ReturnCode.EBICS_SIGNER_UNKNOWN);
-    }
+    const signers = verifyUserSignatureData(store, {
+      partnerId: subscriber.partnerId,
+      signatureDataXml: decryptSignatureData(signatureData, wrappedKey, hostConfig.bankKeys.encryptionPrivateKey),
+      data: veu.rawContent,
+    });
 
-    const request = { partnerId: subscriber.partnerId, orderId: veu.orderId, userId: subscriber.userId };
+    const request = { partnerId: subscriber.partnerId, orderId: veu.orderId, userId: signers.map((signer) => signer.userId) };
     const result = orderType === 'HVE' ? signVeuOrder(store, request) : cancelVeuOrder(store, request);
     return respond(ReturnCode.EBICS_OK, result.orderId);
   } catch (err) {
-    if (err instanceof OrderRejection || err instanceof VeuError) return respond(err.returnCode);
+    if (err instanceof OrderRejection || err instanceof VeuError || err instanceof SignatureCheckError) return respond(err.returnCode);
     logError(`${orderType} processing`, err);
     return respond(ReturnCode.EBICS_PROCESSING_ERROR);
   }

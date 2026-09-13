@@ -73,8 +73,8 @@
 
 - [x] BTU handler — generic upload with BTF routing
 - [x] Order data decryption pipeline: RSA unwrap key → AES-CBC decrypt → inflate (`src/protocol/upload-pipeline.ts`)
-- [x] Electronic signature verification — A005 (RSA-PKCS1-SHA256) — parsed but not cryptographically verified (test server)
-- [x] Electronic signature verification — A006 (RSA-PSS-SHA256) — parsed but not cryptographically verified (test server)
+- [x] Electronic signature verification — A005 (RSA-PKCS1-SHA256), verified since Phase 9
+- [x] Electronic signature verification — A006 (RSA-PSS-SHA256), verified since Phase 9
 - [x] UserSignatureData parsing — built in test client, accepted by server
 - [x] Multi-segment upload handling
 - [x] Admin API: `GET /api/uploaded-orders` — view received uploads
@@ -177,10 +177,14 @@
 - [x] HVZ `TotalAmount@isCredit="true"` for credit transfers (chapter 8.3.1.4)
 - [x] HVT with `completeOrderData="false"` (chapter 8.3.3): HVTResponseOrderData with NumOrderInfos and one OrderInfo per CdtTrfTxInf (MsgName, Originator/Recipient AccountInfo with IBAN, BIC if in the file and name, ExecutionDate, Amount `isCredit="true"`, Purpose description), `fetchLimit` (0 = all) and `fetchOffset`; an offset at or beyond the number of single orders → `091112`
 - [x] E002 AES padding per ANSI X9.23 / ISO 10126-2 (chapter 11.3.2.1) for every encrypted download including HPB: zeros and a last byte with the padding length (1-16); received order data is unpadded by that length byte, which also covers PKCS#7
+- [x] Electronic signatures verified (EBICS 3.0.2 chapters 5.3 and 14.1, `src/banking/electronic-signatures.ts`): UserSignatureData must decrypt, inflate and conform to ebics_signature_S002.xsd (`091111` with DS09, DS08, TD03); every OrderSignatureData belongs to the customer of the request (`091120` DS0G), names a known subscriber (`091304` DS14) in state READY (`091305` DS0C suspended, DS27 not activated) with a registered signature key of the same version (`091301` DS0E, DS16), appears once per user (`091306` DS26) and carries a valid A005/A006 signature over the order data without CR, LF and Ctrl-Z (`091301` DS0B). Refused uploads record `ES_VERIFICATION` with that reason code
+- [x] Uploads and HVE may carry EUs of several users, which authorise together (e.g. A + B); a class T uploader may submit the EUs of other users. HVE/HVS sign the order data waiting in the VEU; nothing is recorded when one EU fails
+- [x] PUB, HCA and HCS need exactly one EU of the subscriber whose keys change (chapter 4.6.1), verified with the signature key registered so far. Interpretations where the spec names no reason code: an EU of another or an additional user → `091301` DS0G; an EU of another customer → DS0G
 
 ### Not yet supported (TODO)
 
-- [ ] Cryptographic verification of electronic signatures (uploads, HVE and HVS signatures are parsed only)
+- [ ] SPR: verify the EU over the order data (a single space); SPR is accepted without signature check
+- [ ] VEU signatures (HVE/HVS) by users of other customers; EUs must belong to the customer of the request (`091120`)
 - [ ] Replay of real-time messages for clients that were not connected
 - [ ] Technical subscribers with `SystemID` submitting on behalf of other users
 - [ ] Signature permissions limited to accounts, amounts or BTF, and orders that need two bank-technical signatures (minimum 2)

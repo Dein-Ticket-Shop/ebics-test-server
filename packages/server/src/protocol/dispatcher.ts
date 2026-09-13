@@ -31,6 +31,7 @@ import { OrderRejection } from '../handlers/handler-types.js';
 import { recordEvent, recordUploadCompleted, recordUploadRejected } from '../banking/order-events.js';
 import { handleHvd, handleHvt, handleHvu, handleHvz, processVeuSignature } from '../handlers/veu.js';
 import { handlePtk } from '../handlers/ptk.js';
+import { SignatureCheckError, decryptSignatureData, verifyUserSignatureData } from '../banking/electronic-signatures.js';
 import { hacDownloadEvents } from '../config/feature-flags.js';
 import { PROTOCOL_ORDER_TYPES } from '../handlers/partner-info.js';
 
@@ -531,6 +532,7 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
   }
 
   let businessCode = ReturnCode.EBICS_OK;
+  let rejection: { message: string; reasonCode: string } | undefined;
   try {
     if (tx.segments.length > 0) {
       const rawContent = decryptUpload(
@@ -540,17 +542,35 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
       );
       const subscriber = store.getSubscriber(tx.partnerId, tx.userId);
       const sub = subscriber ?? { partnerId: tx.partnerId, userId: tx.userId } as Subscriber;
+      const signature = {
+        signatureData: tx.signatureData,
+        transactionKey: tx.transactionKey,
+        bankEncryptionPrivateKey: hostConfig.bankKeys.encryptionPrivateKey,
+      };
 
       switch (tx.orderType) {
         case 'PUB':
-          businessCode = handlePub(rawContent, sub, store);
-          break;
         case 'HCA':
-          businessCode = handleHcaKeyMgmt(rawContent, sub, store);
+        case 'HCS': {
+          // Chapter 4.6.1: exactly one EU of the subscriber whose keys change (any signature class), verified with the
+          // signature key registered so far
+          const signers = verifyUserSignatureData(store, {
+            partnerId: tx.partnerId,
+            signatureDataXml: decryptSignatureData(tx.signatureData ?? '', tx.transactionKey, hostConfig.bankKeys.encryptionPrivateKey),
+            data: rawContent,
+          });
+          if (signers.length !== 1 || signers[0]!.userId !== tx.userId) {
+            throw new SignatureCheckError(
+              ReturnCode.EBICS_SIGNATURE_VERIFICATION_FAILED,
+              'DS0G',
+              `${tx.orderType} erfordert genau eine EU des Teilnehmers ${tx.partnerId}/${tx.userId}`,
+            );
+          }
+          if (tx.orderType === 'PUB') businessCode = handlePub(rawContent, sub, store);
+          else if (tx.orderType === 'HCA') businessCode = handleHcaKeyMgmt(rawContent, sub, store);
+          else businessCode = handleHcs(rawContent, sub, store);
           break;
-        case 'HCS':
-          businessCode = handleHcs(rawContent, sub, store);
-          break;
+        }
         default:
           businessCode = handleBtu(
             rawContent,
@@ -558,14 +578,19 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
             tx.msgName,
             sub,
             store,
-            { orderId: tx.orderId, serviceOption: tx.serviceOption, signatureFlag: tx.signatureFlag, requestEds: tx.requestEds },
+            { orderId: tx.orderId, serviceOption: tx.serviceOption, signatureFlag: tx.signatureFlag, requestEds: tx.requestEds, signature },
           );
           break;
       }
     }
   } catch (err) {
-    logError(`upload processing (${tx.orderType})`, err);
-    businessCode = ReturnCode.EBICS_PROCESSING_ERROR;
+    if (err instanceof SignatureCheckError) {
+      businessCode = err.returnCode;
+      rejection = { message: err.message, reasonCode: err.reasonCode };
+    } else {
+      logError(`upload processing (${tx.orderType})`, err);
+      businessCode = ReturnCode.EBICS_PROCESSING_ERROR;
+    }
   }
 
   if (tx.orderId && (tx.orderType === 'PUB' || tx.orderType === 'HCA' || tx.orderType === 'HCS')) {
@@ -573,7 +598,7 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
     if (businessCode === ReturnCode.EBICS_OK) {
       recordUploadCompleted(store, orderCtx);
     } else {
-      recordUploadRejected(store, orderCtx, `Return code ${businessCode}`);
+      recordUploadRejected(store, orderCtx, rejection?.message ?? `Return code ${businessCode}`, rejection?.reasonCode);
     }
   }
 

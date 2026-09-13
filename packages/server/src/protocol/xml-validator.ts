@@ -58,7 +58,7 @@ function loadValidator(dir: string, mainFile: string): XsdValidator {
   }
 }
 
-const validatorNames = ['hev', 'request', 'response', 'keymgmtRequest', 'keymgmtResponse'] as const;
+const validatorNames = ['hev', 'request', 'response', 'keymgmtRequest', 'keymgmtResponse', 'signature'] as const;
 export type ValidatorName = (typeof validatorNames)[number];
 
 type Validators = Record<ValidatorName, XsdValidator>;
@@ -80,6 +80,8 @@ export function getValidators(): Validators {
     response: loadValidator(join(SCHEMAS_DIR, 'H005'), 'ebics_H005.xsd'),
     keymgmtRequest: loadValidator(join(SCHEMAS_DIR, 'H005'), 'ebics_H005.xsd'),
     keymgmtResponse: loadValidator(join(SCHEMAS_DIR, 'H005'), 'ebics_H005.xsd'),
+    // UserSignatureData of electronic signatures (ebics_signature_S002.xsd)
+    signature: loadValidator(join(SCHEMAS_DIR, 'S002'), 'ebics_signature.xsd'),
   };
 
   return _validators;

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { privateDecrypt, createDecipheriv, constants } from 'node:crypto';
 import { createTestApp, postEbics, HOST_ID, PARTNER_ID, USER_ID } from '../helpers/test-server.js';
 import {
+  esSigner,
   generateTestClientKeys,
   buildIniRequest,
   buildHiaRequest,
@@ -102,7 +103,7 @@ async function doUpload(
   content: string,
 ): Promise<string> {
   const bankEncPubKey = getBankEncPubKey(store);
-  const enc = encryptUploadContent(content, bankEncPubKey, PARTNER_ID, USER_ID);
+  const enc = encryptUploadContent(content, bankEncPubKey, esSigner(PARTNER_ID, USER_ID, clientKeys));
   const initRes = await postEbics(app, buildEbicsKeyMgmtUploadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, orderType, enc));
   const initBody = await initRes.text();
   expect(initBody).toContain('000000');

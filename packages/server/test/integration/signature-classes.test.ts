@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { DOMParser } from '@xmldom/xmldom';
 import { createTestApp, postEbics, HOST_ID, PARTNER_ID, USER_ID } from '../helpers/test-server.js';
 import {
+  esSigner,
   buildEbicsUploadTransferRequest,
   buildPain001Document,
   buildPain008Document,
@@ -20,7 +21,6 @@ import { downloadOrder, enrolSubscriber, localTexts, sendVeuSignature, type Ebic
 import { canonicalizeSubtree } from '../../src/protocol/xml-signature.js';
 import { parseXml, xpathString } from '../../src/protocol/xml-parser.js';
 import { validateXml } from '../../src/protocol/xml-validator.js';
-import { orderDataDigest } from '../../src/banking/veu.js';
 import { calculateIban } from '../../src/banking/iban.js';
 import { SqliteStore } from '../../src/store/sqlite-store.js';
 import type { Account, SignatureClass } from '../../src/store/types.js';
@@ -95,7 +95,7 @@ function buildUploadInitRequest(session: EbicsSession, service: Service, enc: En
 
 /** BTU upload (Initialisation and Transfer); returns the OrderID and the business return code of the last Transfer */
 async function upload(session: EbicsSession, content: string, service: Service, mode: SignatureFlagMode): Promise<{ orderId: string; code?: string }> {
-  const enc = encryptUploadContent(content, session.bankEncPubKey, session.partnerId, session.userId);
+  const enc = encryptUploadContent(content, session.bankEncPubKey, esSigner(session.partnerId, session.userId, session.keys));
   const initBody = await session.post(buildUploadInitRequest(session, service, enc, mode));
   expect(readBusinessReturnCode(initBody)).toBe('000000');
   const transactionId = xpathString('//ebics:header/ebics:static/ebics:TransactionID/text()', parseXml(initBody))!;
@@ -362,7 +362,7 @@ describe('Signature classes (EBICS)', () => {
 
       // With a single signature (E) the same user releases the order
       setClass('E', 'USER2');
-      expect((await sendVeuSignature(technical, 'HVE', ref, { dataDigest: orderDataDigest(content) })).code).toBe('000000');
+      expect((await sendVeuSignature(technical, 'HVE', ref)).code).toBe('000000');
       expect(statuses(orderId)).toEqual(['EXECUTED']);
     });
   });
