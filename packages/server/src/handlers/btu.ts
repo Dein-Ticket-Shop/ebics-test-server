@@ -5,7 +5,7 @@ import { processPain008 } from '../banking/processors/pain008.js';
 import { OrderDataError, OrderAuthError, SignatureAuthorisationError } from '../banking/validation.js';
 import { directDebitProtocolText, receiveCreditTransfers } from '../banking/payments.js';
 import { recordUploadCompleted, recordUploadRejected, type OrderContext } from '../banking/order-events.js';
-import { uploadDecision, uploadSignatureClass } from '../banking/signatures.js';
+import { minimumSignaturesNote, uploadDecision, uploadSignatureClass } from '../banking/signatures.js';
 import { SignatureCheckError, decryptSignatureData, verifyUserSignatureData } from '../banking/electronic-signatures.js';
 import { logError } from '../logger.js';
 
@@ -78,9 +78,10 @@ export function handleBtu(
       : [{ userId: subscriber.userId, signatureClass: subscriber.signatureClass }];
     const signerClasses = signers.map((signer) => uploadSignatureClass(signatureFlag, signer.signatureClass));
 
-    if (uploadDecision({ signatureFlag, requestEds, signerClasses }) === 'reject') {
+    const minimumSignatures = store.getMinimumSignatures(subscriber.partnerId, serviceName);
+    if (uploadDecision({ signatureFlag, requestEds, signerClasses, minimumSignatures }) === 'reject') {
       throw new SignatureAuthorisationError(
-        `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus und keine VEU angefordert`,
+        `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus${minimumSignaturesNote(minimumSignatures)} und keine VEU angefordert`,
       );
     }
     if (msgName === 'pain.001') {

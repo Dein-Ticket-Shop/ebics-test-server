@@ -1,9 +1,9 @@
 import { orderDataHash } from './electronic-signatures.js';
-import type { AppStore, OrderSignature, PaymentOrder, SignatureClass } from '../store/types.js';
+import type { AppStore, MinimumSignatures, OrderSignature, PaymentOrder, SignatureClass } from '../store/types.js';
 import { ReturnCode } from '../protocol/return-codes.js';
 import { cancelPaymentOrder, releasePaymentOrder } from './payments.js';
 import { recordEvent } from './order-events.js';
-import { isAuthorised, isBankTechnical } from './signatures.js';
+import { isAuthorised, isBankTechnical, missingSignatures } from './signatures.js';
 
 /** An EBICS order (partner + OrderID) waiting in the VEU (distributed electronic signature) */
 export interface VeuOrder {
@@ -18,6 +18,8 @@ export interface VeuOrder {
    * authorised outside EBICS (no SignatureFlag) or by its class E uploader, and only waits for a VoP confirmation.
    */
   signaturesNeeded: boolean;
+  /** Minimum number of bank-technical signatures agreed for the customer and service (chapters 3.5, 11.2.3) */
+  minimumSignatures: MinimumSignatures;
   vopConfirmationRequired: boolean;
   /** An HVE signature confirmed the VoP result */
   vopConfirmed: boolean;
@@ -52,6 +54,7 @@ function toVeuOrder(store: AppStore, orders: PaymentOrder[]): VeuOrder {
     orders,
     signatures,
     signaturesNeeded: orders.some((o) => o.requestedEds),
+    minimumSignatures: store.getMinimumSignatures(first.partnerId, first.serviceName),
     vopConfirmationRequired: orders.some((o) => o.vopConfirmationRequired),
     vopConfirmed: signatures.some((s) => s.kind === 'HVE'),
     rawContent,
@@ -87,18 +90,23 @@ function signerClasses(veu: VeuOrder): SignatureClass[] {
   return [...byUser.values()];
 }
 
-/** The order needs no VEU signatures, or they authorise it: one E, or two users with at least one E or A */
+/** The order needs no VEU signatures, or they authorise it for the agreed minimum number of signatures (chapter 11.2.3) */
 export function hasRequiredSignatures(veu: VeuOrder): boolean {
-  return !veu.signaturesNeeded || isAuthorised(signerClasses(veu));
+  return !veu.signaturesNeeded || isAuthorised(signerClasses(veu), veu.minimumSignatures);
 }
 
 export function isReleasable(veu: VeuOrder): boolean {
   return hasRequiredSignatures(veu) && (!veu.vopConfirmationRequired || veu.vopConfirmed);
 }
 
-/** NumSigRequired as reported in HVZ: an order still waiting in the VEU needs at least one more signature */
+/**
+ * NumSigRequired as reported in HVU/HVZ ("total number of EUs required for release"): the signatures done plus the
+ * fewest further signatures that authorise the order, or one more while only a VoP confirmation is pending
+ */
 export function numSigRequired(veu: VeuOrder): number {
-  return veu.signatures.length + (isReleasable(veu) ? 0 : 1);
+  if (isReleasable(veu)) return veu.signatures.length;
+  const missing = hasRequiredSignatures(veu) ? 1 : missingSignatures(signerClasses(veu), veu.minimumSignatures);
+  return veu.signatures.length + missing;
 }
 
 /** Whether a subscriber may sign: class E, A or B and not signed yet, unless confirming a pending VoP result */

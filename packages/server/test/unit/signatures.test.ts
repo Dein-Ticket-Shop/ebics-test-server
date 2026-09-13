@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   SIGNATURE_CLASSES,
   isAuthorised,
+  missingSignatures,
   isBankTechnical,
   isSignatureClass,
   uploadDecision,
@@ -113,6 +114,55 @@ describe('signature classes (Unterschriftsklassen)', () => {
     });
   });
 
+  describe('isAuthorised with a minimum of two signatures (chapter 11.2.3)', () => {
+    it.each([
+      [[], false],
+      [['E'], false],
+      [['A'], false],
+      [['B'], false],
+      [['T'], false],
+    ] as [SignatureClass[], boolean][])('one signer %j → %s: E alone is not enough', (signers, expected) => {
+      expect(isAuthorised(signers, 2)).toBe(expected);
+    });
+
+    it('covers every ordered pair of classes: any two bank-technical signatures except B + B', () => {
+      for (const first of CLASSES) {
+        for (const second of CLASSES) {
+          const expected = first !== 'T' && second !== 'T' && !(first === 'B' && second === 'B');
+          expect(isAuthorised([first, second], 2), `${first} + ${second}`).toBe(expected);
+        }
+      }
+    });
+
+    it.each([
+      [['B', 'B', 'A'], true],
+      [['B', 'B', 'E'], true],
+      [['B', 'B', 'B'], false],
+      [['E', 'T', 'T'], false],
+      [['T', 'A', 'B'], true],
+    ] as [SignatureClass[], boolean][])('three signers %j → %s', (signers, expected) => {
+      expect(isAuthorised(signers, 2)).toBe(expected);
+    });
+  });
+
+  describe('missingSignatures', () => {
+    it.each([
+      [1, [], 1],
+      [1, ['T'], 1],
+      [1, ['E'], 0],
+      [1, ['B'], 1],
+      [1, ['B', 'B'], 1],
+      [2, [], 2],
+      [2, ['T'], 2],
+      [2, ['E'], 1],
+      [2, ['B'], 1],
+      [2, ['B', 'B'], 1],
+      [2, ['A', 'B'], 0],
+    ] as [1 | 2, SignatureClass[], number][])('minimum %s with signers %j → %s further signatures', (minimum, signers, expected) => {
+      expect(missingSignatures(signers, minimum)).toBe(expected);
+    });
+  });
+
   describe('uploadSignatureClass', () => {
     it.each(CLASSES)('with SignatureFlag the upload signature has the subscriber class %s', (subscriberClass) => {
       expect(uploadSignatureClass(true, subscriberClass)).toBe(subscriberClass);
@@ -151,6 +201,14 @@ describe('signature classes (Unterschriftsklassen)', () => {
         expect(uploadDecision({ signatureFlag, requestEds, signerClasses: [signatureClass] })).toBe(expected);
       },
     );
+
+    it('applies the agreed minimum of two signatures to signed uploads only', () => {
+      expect(uploadDecision({ signatureFlag: true, requestEds: false, signerClasses: ['E'], minimumSignatures: 2 })).toBe('reject');
+      expect(uploadDecision({ signatureFlag: true, requestEds: true, signerClasses: ['E'], minimumSignatures: 2 })).toBe('veu');
+      expect(uploadDecision({ signatureFlag: true, requestEds: false, signerClasses: ['A', 'B'], minimumSignatures: 2 })).toBe('execute');
+      expect(uploadDecision({ signatureFlag: true, requestEds: true, signerClasses: ['B', 'B'], minimumSignatures: 2 })).toBe('veu');
+      expect(uploadDecision({ signatureFlag: false, requestEds: false, signerClasses: ['T'], minimumSignatures: 2 })).toBe('execute');
+    });
 
     it('executes uploads without SignatureFlag once the class is derived with uploadSignatureClass', () => {
       for (const subscriberClass of CLASSES) {

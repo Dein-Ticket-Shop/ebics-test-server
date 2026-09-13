@@ -150,6 +150,63 @@ describe('VEU (distributed electronic signature)', () => {
     });
   });
 
+  describe('minimum of two signatures agreed for the service (chapter 11.2.3)', () => {
+    beforeEach(() => store.setMinimumSignatures(PARTNER_ID, 2, 'SCI'));
+
+    it('holds a class E upload with requestEDS and releases it with a second signature', () => {
+      const { orderId, orders } = receive('MIN2-E');
+      expect(orders[0]).toMatchObject({ status: 'PENDING_EDS' });
+      expect(forwardingInfo(orderId)).toEqual(['Unterschriftsklasse E (Mindestanzahl 2 EUs): weitere Unterschrift erforderlich']);
+      const veu = veuOf(orderId);
+      expect(veu.minimumSignatures).toBe(2);
+      expect(hasRequiredSignatures(veu)).toBe(false);
+      expect(numSigRequired(veu)).toBe(2);
+
+      setClass(SIGNER, 'B');
+      expect(sign(orderId, SIGNER).released).toBe(true);
+      expect(orderStatus(orders[0]!.id)).toBe('EXECUTED');
+    });
+
+    it('rejects a class E upload with SignatureFlag but without requestEDS', () => {
+      expect(() => receive('MIN2-REJECT', { signatureFlag: true, requestEds: false })).toThrow(
+        new SignatureAuthorisationError('Unterschriftsklasse E von USER1 reicht nicht aus (Mindestanzahl 2 EUs) und keine VEU angefordert'),
+      );
+      expect(store.listPaymentOrders()).toEqual([]);
+    });
+
+    it('does not release B + B and counts the missing signatures in NumSigRequired', () => {
+      setClass(UPLOADER, 'B');
+      setClass(SIGNER, 'B');
+      setClass(THIRD, 'A');
+      const { orderId, orders } = receive('MIN2-BB', { signatureClass: 'B' });
+      expect(numSigRequired(veuOf(orderId))).toBe(2);
+
+      expect(sign(orderId, SIGNER).released).toBe(false);
+      expect(hasRequiredSignatures(veuOf(orderId))).toBe(false);
+      expect(numSigRequired(veuOf(orderId))).toBe(3);
+
+      expect(sign(orderId, THIRD).released).toBe(true);
+      expect(orderStatus(orders[0]!.id)).toBe('EXECUTED');
+    });
+
+    it('takes the rule of the service before the rule of the customer', () => {
+      store.setMinimumSignatures(PARTNER_ID, 2);
+      store.setMinimumSignatures(PARTNER_ID, 1, 'SCI');
+      expect(store.getMinimumSignatures(PARTNER_ID, 'SCI')).toBe(1);
+      expect(store.getMinimumSignatures(PARTNER_ID, 'SDD')).toBe(2);
+      expect(store.getMinimumSignatures(PARTNER_ID)).toBe(2);
+      expect(store.getMinimumSignatures('PARTNER2', 'SCI')).toBe(1);
+      expect(store.getMinimumSignatureRules(PARTNER_ID)).toEqual({ partnerId: PARTNER_ID, minimumSignatures: 2, services: { SCI: 1 } });
+
+      const { orders } = receive('MIN-SERVICE');
+      expect(orders[0]).toMatchObject({ status: 'EXECUTED' });
+
+      store.setMinimumSignatures(PARTNER_ID, null, 'SCI');
+      store.setMinimumSignatures(PARTNER_ID, null);
+      expect(store.getMinimumSignatureRules(PARTNER_ID)).toEqual({ partnerId: PARTNER_ID, minimumSignatures: 1, services: {} });
+    });
+  });
+
   describe('class E uploader (default)', () => {
     it('subscribers have signature class E by default', () => {
       expect(store.getSubscriber(PARTNER_ID, UPLOADER)!.signatureClass).toBe('E');

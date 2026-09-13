@@ -94,6 +94,8 @@ export function buildPartnerInfo(
   hostConfig: HostConfig,
   accounts: Account[],
   orderTypes: OrderTypeInfo[],
+  /** Agreed minimum number of bank-technical signatures per BTF service, reported as NumSigRequired of BTU entries */
+  minimumSignatures?: (serviceName: string) => number,
 ): void {
   const partnerInfo = parent.ele(EBICS_NS.H005, 'PartnerInfo');
 
@@ -119,6 +121,10 @@ export function buildPartnerInfo(
       addService(orderInfo, ot.service);
     }
     orderInfo.ele(EBICS_NS.H005, 'Description').txt(ot.description);
+    // NumSigRequired: "Anzahl erforderlicher EUs" (default 0), agreed per BTF between bank and customer (chapter 3.5)
+    if (ot.adminType === 'BTU' && ot.service && minimumSignatures) {
+      orderInfo.ele(EBICS_NS.H005, 'NumSigRequired').txt(String(minimumSignatures(ot.service.serviceName)));
+    }
   }
 }
 

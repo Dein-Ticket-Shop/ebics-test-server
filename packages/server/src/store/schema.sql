@@ -97,6 +97,14 @@ CREATE TABLE IF NOT EXISTS partner_account_access (
     PRIMARY KEY (partner_id, account_id)
 );
 
+-- Minimum number of bank-technical signatures per customer; service_name '' is the customer rule
+CREATE TABLE IF NOT EXISTS minimum_signatures (
+    partner_id TEXT NOT NULL,
+    service_name TEXT NOT NULL DEFAULT '',
+    minimum INTEGER NOT NULL CHECK (minimum IN (1, 2)),
+    PRIMARY KEY (partner_id, service_name)
+);
+
 CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,

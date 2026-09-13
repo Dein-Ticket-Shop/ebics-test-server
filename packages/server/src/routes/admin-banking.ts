@@ -159,6 +159,27 @@ export function createBankingAdminRoute(store: AppStore) {
     return c.json({ status: 'revoked' });
   });
 
+  // Minimum number of bank-technical signatures agreed with the customer, optionally per BTF service (EBICS 3.0.2 chapter 3.5)
+
+  app.get('/partners/:partnerId/minimum-signatures', (c) => {
+    return c.json(store.getMinimumSignatureRules(c.req.param('partnerId')));
+  });
+
+  /** { minimumSignatures: 1 | 2 | null, serviceName?: "SCI" }: sets the rule of the customer or of one service; null removes it */
+  app.put('/partners/:partnerId/minimum-signatures', async (c) => {
+    const partnerId = c.req.param('partnerId');
+    const body = (await c.req.json().catch(() => ({}))) as { minimumSignatures?: unknown; serviceName?: unknown };
+    if (body.minimumSignatures !== 1 && body.minimumSignatures !== 2 && body.minimumSignatures !== null) {
+      return c.json({ error: 'minimumSignatures must be 1, 2 or null (removes the rule)' }, 400);
+    }
+    // ServiceNameStringType: three characters of [A-Z0-9]
+    if (body.serviceName !== undefined && (typeof body.serviceName !== 'string' || !/^[A-Z0-9]{3}$/.test(body.serviceName))) {
+      return c.json({ error: 'serviceName must be a BTF service name of three characters A-Z or 0-9, e.g. SCI' }, 400);
+    }
+    store.setMinimumSignatures(partnerId, body.minimumSignatures, body.serviceName);
+    return c.json(store.getMinimumSignatureRules(partnerId));
+  });
+
   // Bookings
 
   app.get('/accounts/:id/bookings', (c) => {

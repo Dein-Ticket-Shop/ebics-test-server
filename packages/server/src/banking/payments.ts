@@ -8,7 +8,7 @@ import type {
 } from '../store/types.js';
 import { parseXml } from '../protocol/xml-parser.js';
 import { vopConfirmationRequired } from '../config/feature-flags.js';
-import { uploadDecision, uploadSignatureClass } from './signatures.js';
+import { minimumSignaturesNote, uploadDecision, uploadSignatureClass } from './signatures.js';
 import { SignatureAuthorisationError } from './validation.js';
 import { vopGroupStatus } from './generators/pain002.js';
 import { xpathSelect } from '../protocol/xml-parser.js';
@@ -119,10 +119,11 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
     ]
   ).map((signer) => ({ userId: signer.userId, signatureClass: uploadSignatureClass(signatureFlag, signer.signatureClass) }));
   const signerClasses = signers.map((signer) => signer.signatureClass);
-  const decision = uploadDecision({ signatureFlag, requestEds: upload.requestEds, signerClasses });
+  const minimumSignatures = store.getMinimumSignatures(upload.partnerId, upload.serviceName);
+  const decision = uploadDecision({ signatureFlag, requestEds: upload.requestEds, signerClasses, minimumSignatures });
   if (decision === 'reject') {
     throw new SignatureAuthorisationError(
-      `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus und keine VEU angefordert`,
+      `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus${minimumSignaturesNote(minimumSignatures)} und keine VEU angefordert`,
     );
   }
 
@@ -186,7 +187,7 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
     recordEvent(store, ctx, 'VEU_FORWARDING', {
       reasonCode: 'DS06',
       additionalInfo: [
-        ...(signatureHold ? [`Unterschriftsklasse ${signerClasses.join('+')}: weitere Unterschrift erforderlich`] : []),
+        ...(signatureHold ? [`Unterschriftsklasse ${signerClasses.join('+')}${minimumSignaturesNote(minimumSignatures)}: weitere Unterschrift erforderlich`] : []),
         ...(vopHold ? [`Empfaengerueberpruefung ${vopGroup}: Bestaetigung per Unterschrift erforderlich`] : []),
       ],
     });

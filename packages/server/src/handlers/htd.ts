@@ -21,7 +21,9 @@ export function handleHtd(
   const root = create({ version: '1.0', encoding: 'UTF-8' })
     .ele(EBICS_NS.H005, 'HTDResponseOrderData');
 
-  buildPartnerInfo(root, subscriber.partnerId, hostConfig, accounts, SUPPORTED_ORDER_TYPES);
+  buildPartnerInfo(root, subscriber.partnerId, hostConfig, accounts, SUPPORTED_ORDER_TYPES, (serviceName) =>
+    store.getMinimumSignatures(subscriber.partnerId, serviceName),
+  );
 
   const userInfo = root.ele(EBICS_NS.H005, 'UserInfo');
   userInfo

@@ -45,6 +45,7 @@ export function createVeuAdminRoute(store: AppStore) {
       signaturesDone: distinctSigners(veu),
       signaturesComplete: hasRequiredSignatures(veu),
       numSigRequired: numSigRequired(veu),
+      minimumSignatures: veu.minimumSignatures,
       vopConfirmationRequired: veu.vopConfirmationRequired,
       vopConfirmed: veu.vopConfirmed,
       releasable: isReleasable(veu),

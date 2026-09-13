@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { SignatureClass } from './types.js';
+import type { SignatureClass, MinimumSignatureRules, MinimumSignatures } from './types.js';
 import type { EbicsStore, Subscriber, SubscriberKeys, HostConfig, BankKeys, ActivityLogEntry, ProtocolLogEntry, Transaction, TransactionPhase, DownloadData, BankingStore, BankConfig, Person, Account, Booking, AppStore, UploadedOrder } from './types.js';
 import type {
   DateFilter,
@@ -434,6 +434,7 @@ export class SqliteStore implements AppStore {
     this.db.exec('DELETE FROM download_data');
     this.db.exec('DELETE FROM bookings');
     this.db.exec('DELETE FROM partner_account_access');
+    this.db.exec('DELETE FROM minimum_signatures');
     this.db.exec('DELETE FROM accounts');
     this.db.exec('DELETE FROM persons');
     this.db.exec('DELETE FROM bank_config');
@@ -582,6 +583,37 @@ export class SqliteStore implements AppStore {
 
   revokeAccountAccess(partnerId: string, accountId: number): void {
     this.db.prepare('DELETE FROM partner_account_access WHERE partner_id = ? AND account_id = ?').run(partnerId, accountId);
+  }
+
+  // Minimum number of bank-technical signatures (EBICS 3.0.2 chapter 3.5)
+
+  getMinimumSignatures(partnerId: string, serviceName?: string): MinimumSignatures {
+    const row = this.db.prepare(
+      "SELECT minimum FROM minimum_signatures WHERE partner_id = ? AND service_name IN (?, '') ORDER BY service_name = '' LIMIT 1",
+    ).get(partnerId, serviceName ?? '') as { minimum: number } | undefined;
+    return row?.minimum === 2 ? 2 : 1;
+  }
+
+  getMinimumSignatureRules(partnerId: string): MinimumSignatureRules {
+    const rows = this.db.prepare('SELECT service_name, minimum FROM minimum_signatures WHERE partner_id = ? ORDER BY service_name')
+      .all(partnerId) as { service_name: string; minimum: number }[];
+    const rules: MinimumSignatureRules = { partnerId, minimumSignatures: 1, services: {} };
+    for (const row of rows) {
+      const minimum: MinimumSignatures = row.minimum === 2 ? 2 : 1;
+      if (row.service_name === '') rules.minimumSignatures = minimum;
+      else rules.services[row.service_name] = minimum;
+    }
+    return rules;
+  }
+
+  setMinimumSignatures(partnerId: string, minimumSignatures: MinimumSignatures | null, serviceName?: string): void {
+    if (minimumSignatures === null) {
+      this.db.prepare('DELETE FROM minimum_signatures WHERE partner_id = ? AND service_name = ?').run(partnerId, serviceName ?? '');
+      return;
+    }
+    this.db.prepare(
+      'INSERT INTO minimum_signatures (partner_id, service_name, minimum) VALUES (?, ?, ?) ON CONFLICT (partner_id, service_name) DO UPDATE SET minimum = excluded.minimum',
+    ).run(partnerId, serviceName ?? '', minimumSignatures);
   }
 
   createBooking(data: Omit<Booking, 'id' | 'createdAt'>): Booking {

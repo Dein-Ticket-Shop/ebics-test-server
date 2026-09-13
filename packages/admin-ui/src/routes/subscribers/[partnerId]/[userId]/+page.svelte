@@ -4,8 +4,16 @@
   import StateBadge from '$lib/components/StateBadge.svelte';
   import CertFingerprint from '$lib/components/CertFingerprint.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { activateSubscriber, suspendSubscriber, reactivateSubscriber, deleteSubscriber, updateSubscriber } from '$lib/api.js';
-  import type { SignatureClass, Subscriber } from '$lib/types.js';
+  import {
+    activateSubscriber,
+    suspendSubscriber,
+    reactivateSubscriber,
+    deleteSubscriber,
+    updateSubscriber,
+    getMinimumSignatureRules,
+    setMinimumSignatures,
+  } from '$lib/api.js';
+  import type { MinimumSignatureRules, SignatureClass, Subscriber } from '$lib/types.js';
 
   interface Props {
     data: { subscriber: Subscriber };
@@ -82,6 +90,34 @@
   );
 
   let savingPermissions = $state(false);
+
+  // Minimum number of bank-technical signatures agreed with the customer (EBICS 3.0.2 chapters 3.5, 11.2.3)
+  let minimumRules = $state<MinimumSignatureRules | null>(null);
+  let minimumError = $state('');
+  let newServiceName = $state('');
+  let newServiceMinimum = $state<1 | 2>(2);
+
+  $effect(() => {
+    getMinimumSignatureRules(sub.partnerId)
+      .then((rules) => (minimumRules = rules))
+      .catch((e) => (minimumError = e instanceof Error ? e.message : 'Loading the signature rules failed'));
+  });
+
+  async function saveMinimum(data: { minimumSignatures: 1 | 2 | null; serviceName?: string }) {
+    minimumError = '';
+    try {
+      minimumRules = await setMinimumSignatures(sub.partnerId, data);
+    } catch (e) {
+      minimumError = e instanceof Error ? e.message : 'Saving the signature rule failed';
+    }
+  }
+
+  async function addServiceRule() {
+    const serviceName = newServiceName.trim().toUpperCase();
+    if (!serviceName) return;
+    await saveMinimum({ serviceName, minimumSignatures: newServiceMinimum });
+    if (!minimumError) newServiceName = '';
+  }
 
   async function saveSettings(patch: Partial<Pick<Subscriber, 'protocolDownloadsAllowed' | 'signatureClass'>>, revert: () => void) {
     savingPermissions = true;
@@ -228,6 +264,63 @@
       </span>
     </span>
   </label>
+</div>
+
+<!-- Minimum signatures of the customer -->
+<h2 class="text-lg font-semibold mb-1">Minimum signatures of customer <span class="font-mono">{sub.partnerId}</span></h2>
+<p class="text-xs text-base-content/50 mb-4">
+  Number of bank-technical signatures (E, A, B) agreed for all users of the customer, optionally per BTF service. With 1 a
+  single E, or two signatures with at least one E or A, authorise an order; with 2 any two signatures of different users
+  except B + B do and E alone is not enough. HKD and HTD report it as <span class="font-mono">NumSigRequired</span>.
+</p>
+<div class="bg-base-200 rounded-xl p-4 mb-6 flex flex-col gap-3">
+  {#if minimumError}
+    <div class="alert alert-error text-sm">{minimumError}</div>
+  {/if}
+  {#if minimumRules}
+    <div class="flex items-center gap-3">
+      <select
+        class="select select-bordered select-sm font-mono w-20"
+        aria-label="Minimum signatures of the customer"
+        value={String(minimumRules.minimumSignatures)}
+        onchange={(e) => saveMinimum({ minimumSignatures: Number(e.currentTarget.value) as 1 | 2 })}
+      >
+        <option value="1">1</option>
+        <option value="2">2</option>
+      </select>
+      <span class="text-sm">Every service without its own rule</span>
+    </div>
+    {#each Object.entries(minimumRules.services) as [serviceName, minimum] (serviceName)}
+      <div class="flex items-center gap-3">
+        <select
+          class="select select-bordered select-sm font-mono w-20"
+          aria-label={`Minimum signatures for ${serviceName}`}
+          value={String(minimum)}
+          onchange={(e) => saveMinimum({ serviceName, minimumSignatures: Number(e.currentTarget.value) as 1 | 2 })}
+        >
+          <option value="1">1</option>
+          <option value="2">2</option>
+        </select>
+        <span class="text-sm font-mono w-12">{serviceName}</span>
+        <button class="btn btn-ghost btn-xs" onclick={() => saveMinimum({ serviceName, minimumSignatures: null })}>Remove</button>
+      </div>
+    {/each}
+    <div class="flex items-center gap-2">
+      <input
+        type="text"
+        maxlength="3"
+        class="input input-bordered input-sm w-20 font-mono"
+        placeholder="SCI"
+        aria-label="BTF service name"
+        bind:value={newServiceName}
+      />
+      <select class="select select-bordered select-sm font-mono w-20" aria-label="Minimum signatures of the service" bind:value={newServiceMinimum}>
+        <option value={1}>1</option>
+        <option value={2}>2</option>
+      </select>
+      <button class="btn btn-sm" disabled={!newServiceName.trim()} onclick={addServiceRule}>Add service rule</button>
+    </div>
+  {/if}
 </div>
 
 <!-- Key overview -->

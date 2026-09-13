@@ -22,6 +22,7 @@ import type {
   WssParameters,
   RealtimeConnection,
   KeptRealtimeMessages,
+  MinimumSignatureRules,
   BtfNotification,
   DownloadData,
 } from './types.js';
@@ -128,6 +129,14 @@ export const grantAccountAccess = (partnerId: string, accountId: number) =>
   json<{ status: string }>(`${BANK}/partners/${encodeURIComponent(partnerId)}/accounts/${accountId}`, { method: 'POST' });
 export const revokeAccountAccess = (partnerId: string, accountId: number) =>
   json<{ status: string }>(`${BANK}/partners/${encodeURIComponent(partnerId)}/accounts/${accountId}`, { method: 'DELETE' });
+export const getMinimumSignatureRules = (partnerId: string) =>
+  json<MinimumSignatureRules>(`${BANK}/partners/${encodeURIComponent(partnerId)}/minimum-signatures`);
+/** Sets the customer rule, or the rule of one BTF service; null removes it */
+export const setMinimumSignatures = (partnerId: string, data: { minimumSignatures: 1 | 2 | null; serviceName?: string }) =>
+  json<MinimumSignatureRules>(`${BANK}/partners/${encodeURIComponent(partnerId)}/minimum-signatures`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
 
 export const listBookings = (accountId: number, from?: string, to?: string) => {
   const params = new URLSearchParams();

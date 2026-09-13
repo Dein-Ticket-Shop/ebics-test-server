@@ -253,6 +253,12 @@ export interface BankingStore {
   grantAccountAccess(partnerId: string, accountId: number): void;
   revokeAccountAccess(partnerId: string, accountId: number): void;
 
+  /** Minimum number of bank-technical signatures for the customer and BTF service: the service rule, the customer rule or 1 */
+  getMinimumSignatures(partnerId: string, serviceName?: string): MinimumSignatures;
+  getMinimumSignatureRules(partnerId: string): MinimumSignatureRules;
+  /** Sets the customer rule, or the rule of one BTF service; null removes it */
+  setMinimumSignatures(partnerId: string, minimumSignatures: MinimumSignatures | null, serviceName?: string): void;
+
   createBooking(data: Omit<Booking, 'id' | 'createdAt'>): Booking;
   listBookingsForAccount(accountId: number, fromDate?: string, toDate?: string): Booking[];
   deleteBooking(id: number): void;
@@ -370,6 +376,20 @@ export type DeliveryKind = 'camt.054' | 'psr' | 'vop' | 'hac' | 'ptk';
 export type OrderSignatureKind = 'UPLOAD' | 'HVE';
 
 /** Electronic signature on an EBICS order (VEU) */
+/**
+ * Minimum number of bank-technical signatures agreed between bank and customer (EBICS 3.0.2 chapter 3.5), one of the
+ * authorisation schemes of chapter 11.2.3
+ */
+export type MinimumSignatures = 1 | 2;
+
+export interface MinimumSignatureRules {
+  partnerId: string;
+  /** Rule of the customer for every service without its own rule (default 1) */
+  minimumSignatures: MinimumSignatures;
+  /** Rules per BTF ServiceName, e.g. { SCI: 2 } */
+  services: Record<string, MinimumSignatures>;
+}
+
 export interface OrderSignature {
   id: number;
   partnerId: string;

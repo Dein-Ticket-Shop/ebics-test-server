@@ -305,6 +305,8 @@ export interface VeuOrder {
   transactions: PaymentTransaction[];
   /** bank-technical signatures (E, A, B) */
   signatures: OrderSignature[];
+  /** Minimum number of bank-technical signatures agreed for the customer and service */
+  minimumSignatures: 1 | 2;
   /** distinct signing users */
   signaturesDone: number;
   /** the signatures authorise the order: one E, or two users with at least one E or A */
@@ -361,4 +363,13 @@ export interface DownloadData {
   contentType: string;
   /** SQLite datetime without zone (UTC) */
   createdAt: string;
+}
+
+/** Minimum number of bank-technical signatures agreed with a customer (EBICS 3.0.2 chapters 3.5, 11.2.3) */
+export interface MinimumSignatureRules {
+  partnerId: string;
+  /** Rule for every service without its own rule */
+  minimumSignatures: 1 | 2;
+  /** Rules per BTF ServiceName */
+  services: Record<string, 1 | 2>;
 }
