@@ -8,6 +8,7 @@ import {
   buildEbicsOrderParamsDownloadInitRequest,
   buildEbicsReceiptRequest,
   buildEbicsUploadInitRequest,
+  buildEbicsSprRequest,
   buildEbicsUploadTransferRequest,
   buildEbicsVeuSignatureRequest,
   decryptDownloadResponseBytes,
@@ -21,6 +22,7 @@ import {
   type EsSignatures,
   type EsSigner,
   type SignatureVersion,
+  type SprOptions,
   type TestClientKeys,
   type UploadOptions,
   type VeuOrderRef,
@@ -161,6 +163,24 @@ export async function sendVeuSignature(
   );
   const technicalCode = xpathString('//ebics:header/ebics:mutable/ebics:ReturnCode/text()', parseXml(body));
   return { code: readBusinessReturnCode(body), technicalCode, orderId: readOrderId(body), body };
+}
+
+/** SPR; returns the technical and business return codes, the OrderID and the TransactionID of the response */
+export async function sendSpr(
+  session: EbicsSession,
+  options: SprOptions = {},
+): Promise<{ code?: string; technicalCode?: string; orderId?: string; transactionId?: string; body: string }> {
+  const body = await session.post(
+    buildEbicsSprRequest(HOST_ID, session.partnerId, session.userId, session.keys, session.bankCerts, session.bankEncPubKey, options),
+  );
+  const doc = parseXml(body);
+  return {
+    code: readBusinessReturnCode(body),
+    technicalCode: xpathString('//ebics:header/ebics:mutable/ebics:ReturnCode/text()', doc),
+    orderId: readOrderId(body),
+    transactionId: xpathString('//ebics:header/ebics:static/ebics:TransactionID/text()', doc),
+    body,
+  };
 }
 
 /** Text content of all elements matching a path of local names, anywhere in the document */

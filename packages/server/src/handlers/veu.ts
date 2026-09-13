@@ -132,16 +132,25 @@ function requireSignatureAuthorisation(subscriber: Subscriber): void {
   }
 }
 
-/** Order must belong to the requesting partner and be waiting for signatures */
-function requestedVeuOrder(ctx: HandlerContext, store: AppStore, subscriber: Subscriber, orderType: string): VeuOrder {
+/**
+ * The order an HVD/HVT/HVE/HVS request refers to: it must wait for signatures (EBICS_ORDERID_UNKNOWN) and belong to the
+ * customer of the subscriber, as cross-customer signatures (chapter 3.5) are not supported. Missing authorisation is
+ * EBICS_DISTRIBUTED_SIGNATURE_AUTHORISATION_FAILED for HVD/HVT (chapters 8.3.2, 8.3.3) and
+ * EBICS_AUTHORISATION_ORDER_IDENTIFIER_FAILED for HVE (chapter 8.3.4) and HVS.
+ */
+function requestedVeuOrder(ctx: HandlerContext, store: AppStore, subscriber: Subscriber, orderType: 'HVD' | 'HVT' | 'HVE' | 'HVS'): VeuOrder {
   const params = `//ebics:${orderType}OrderParams`;
   const partnerId = xpathString(`${params}/ebics:PartnerID/text()`, ctx.doc) ?? subscriber.partnerId;
-  if (partnerId !== subscriber.partnerId) {
-    throw new OrderRejection(ReturnCode.EBICS_PARTNER_ID_MISMATCH);
-  }
   const orderId = xpathString(`${params}/ebics:OrderID/text()`, ctx.doc);
   const veu = orderId ? getVeuOrder(store, partnerId, orderId) : undefined;
   if (!veu) throw new OrderRejection(ReturnCode.EBICS_ORDERID_UNKNOWN);
+  if (veu.partnerId !== subscriber.partnerId) {
+    throw new OrderRejection(
+      orderType === 'HVD' || orderType === 'HVT'
+        ? ReturnCode.EBICS_DISTRIBUTED_SIGNATURE_AUTHORISATION_FAILED
+        : ReturnCode.EBICS_AUTHORISATION_ORDER_TYPE_FAILED,
+    );
+  }
   return veu;
 }
 
@@ -330,7 +339,14 @@ export function processVeuSignature(
     const veu = requestedVeuOrder(ctx, store, subscriber, orderType);
     const wrappedKey = xpathString('//ebics:body/ebics:DataTransfer/ebics:DataEncryptionInfo/ebics:TransactionKey/text()', ctx.doc);
     const signatureData = xpathString('//ebics:body/ebics:DataTransfer/ebics:SignatureData/text()', ctx.doc);
-    if (!wrappedKey || !signatureData) return respond(ReturnCode.EBICS_INVALID_REQUEST_CONTENT);
+    if (!wrappedKey || !signatureData) {
+      // A technical return code (EBICS annex 1, chapter 2)
+      const code = ReturnCode.EBICS_INVALID_REQUEST_CONTENT;
+      return {
+        ...buildEbicsResponse({ technicalCode: code, businessCode: code, transactionPhase: 'Initialisation' }),
+        logEntry: { orderType, partnerId: subscriber.partnerId, userId: subscriber.userId, resultCode: code },
+      };
+    }
 
     const signers = verifyUserSignatureData(store, {
       partnerId: subscriber.partnerId,

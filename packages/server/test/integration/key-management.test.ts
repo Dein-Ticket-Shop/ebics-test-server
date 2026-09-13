@@ -11,6 +11,7 @@ import {
   buildEbicsReceiptRequest,
   buildEbicsUploadTransferRequest,
   buildEbicsKeyMgmtUploadInitRequest,
+  buildEbicsSprRequest,
   encryptUploadContent,
   decryptDownloadResponse,
   type BankCerts,
@@ -177,7 +178,7 @@ describe('Key Management', () => {
     it('should suspend subscriber', async () => {
       const sprRes = await postEbics(
         app,
-        buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SPR'),
+        buildEbicsSprRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, getBankEncPubKey(store)),
       );
       expect(await sprRes.text()).toContain('000000');
 
@@ -186,7 +187,7 @@ describe('Key Management', () => {
     });
 
     it('should reject requests after suspension', async () => {
-      await postEbics(app, buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'SPR'));
+      await postEbics(app, buildEbicsSprRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, getBankEncPubKey(store)));
 
       const hpdRes = await postEbics(
         app,

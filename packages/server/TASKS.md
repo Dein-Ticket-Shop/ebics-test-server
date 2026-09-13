@@ -180,11 +180,12 @@
 - [x] Electronic signatures verified (EBICS 3.0.2 chapters 5.3 and 14.1, `src/banking/electronic-signatures.ts`): UserSignatureData must decrypt, inflate and conform to ebics_signature_S002.xsd (`091111` with DS09, DS08, TD03); every OrderSignatureData belongs to the customer of the request (`091120` DS0G), names a known subscriber (`091304` DS14) in state READY (`091305` DS0C suspended, DS27 not activated) with a registered signature key of the same version (`091301` DS0E, DS16), appears once per user (`091306` DS26) and carries a valid A005/A006 signature over the order data without CR, LF and Ctrl-Z (`091301` DS0B). Refused uploads record `ES_VERIFICATION` with that reason code
 - [x] Uploads and HVE may carry EUs of several users, which authorise together (e.g. A + B); a class T uploader may submit the EUs of other users. HVE/HVS sign the order data waiting in the VEU; nothing is recorded when one EU fails
 - [x] PUB, HCA and HCS need exactly one EU of the subscriber whose keys change (chapter 4.6.1), verified with the signature key registered so far. Interpretations where the spec names no reason code: an EU of another or an additional user → `091301` DS0G; an EU of another customer → DS0G
+- [x] SPR (chapters 4.5.1, 4.5.2): an upload with only the EU of the subscriber to be suspended over a dummy file with exactly one space, processed in the Initialisation phase; the response carries an OrderID but no TransactionID. Invalid EUs → `091111`/`091301`/…, an EU of another or an additional user → `091301` (interpretation, as for PUB/HCA/HCS), an OrderID in the request → technical `091113` EBICS_INVALID_REQUEST_CONTENT (chapter 5.5)
+- [x] HVE/HVS without TransactionKey or SignatureData answer `091113` as technical return code (EBICS annex 1, chapter 2)
+- [x] Orders of other customers cannot be listed or signed (cross-customer signatures, chapter 3.5, are an optional special case and not supported): HVU/HVZ list only the own customer's orders; HVD/HVT/HVE/HVS answer `091114` when no such order waits for signatures, otherwise `091007` (HVD/HVT, chapters 8.3.2, 8.3.3) or `090003` (HVE, chapter 8.3.4, and HVS). `091120` is only returned for EU files of another customer
 
 ### Not yet supported (TODO)
 
-- [ ] SPR: verify the EU over the order data (a single space); SPR is accepted without signature check
-- [ ] VEU signatures (HVE/HVS) by users of other customers; EUs must belong to the customer of the request (`091120`)
 - [ ] Replay of real-time messages for clients that were not connected
 - [ ] Technical subscribers with `SystemID` submitting on behalf of other users
 - [ ] Signature permissions limited to accounts, amounts or BTF, and orders that need two bank-technical signatures (minimum 2)

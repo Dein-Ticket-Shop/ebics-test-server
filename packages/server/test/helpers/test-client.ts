@@ -756,6 +756,41 @@ export function buildEbicsVeuSignatureRequest(
   return signEbicsRequest(xml, keys.authKeyPair.privateKey);
 }
 
+export interface SprOptions {
+  /** EUs in the UserSignatureData; defaults to the requesting subscriber signing the dummy file (one space) */
+  signatures?: EsSignatures;
+  /** OrderID in the static header, which an SPR request must not carry */
+  orderId?: string;
+  /** false sends signature data that is encrypted but not deflated (undecodable for the bank) */
+  compressSignatureData?: boolean;
+}
+
+/**
+ * SPR request (EBICS 3.0.2 chapter 4.5): an upload with NumSegments 0 whose body carries only the EU over a dummy
+ * file with exactly one space. The dummy file is not transmitted, so DataDigest stays empty.
+ */
+export function buildEbicsSprRequest(
+  hostId: string,
+  partnerId: string,
+  userId: string,
+  keys: TestClientKeys,
+  bankCerts: BankCerts,
+  bankEncPubKeyPem: string,
+  options: SprOptions = {},
+): string {
+  const nonce = generateNonce();
+  const timestamp = new Date().toISOString();
+  const authDigest = computeCertDigest(bankCerts.authCertPem);
+  const encDigest = computeCertDigest(bankCerts.encCertPem);
+  const sigXml = userSignatureDataXml(' ', options.signatures ?? esSigner(partnerId, userId, keys));
+  const signature = encryptSignatureData(bankEncPubKeyPem, sigXml, { compress: options.compressSignatureData });
+  const orderId = options.orderId ? `<OrderID>${options.orderId}</OrderID>` : '';
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>SPR</AdminOrderType>${orderId}<StandardOrderParams xmlns="urn:org:ebics:H005"/></OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0000</SecurityMedium><NumSegments>0</NumSegments></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body><DataTransfer><DataEncryptionInfo authenticate="true"><EncryptionPubKeyDigest Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</EncryptionPubKeyDigest><TransactionKey>${signature.wrappedKey}</TransactionKey></DataEncryptionInfo><SignatureData authenticate="true">${signature.signatureDataB64}</SignatureData><DataDigest SignatureVersion="A006"></DataDigest></DataTransfer></body></ebicsRequest>`;
+
+  return signEbicsRequest(xml, keys.authKeyPair.privateKey);
+}
+
 // Direct debit document helper
 
 export interface Pain008Transaction {

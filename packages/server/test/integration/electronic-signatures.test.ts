@@ -14,7 +14,7 @@ import {
   type UploadOptions,
   type VeuOrderRef,
 } from '../helpers/test-client.js';
-import { enrolSubscriber, sendVeuSignature, sessionSigner, uploadOrder, type EbicsSession, type PostXml } from '../helpers/ebics-session.js';
+import { enrolSubscriber, sendSpr, sendVeuSignature, sessionSigner, uploadOrder, type EbicsSession, type PostXml } from '../helpers/ebics-session.js';
 import { parseXml, xpathString } from '../../src/protocol/xml-parser.js';
 import { calculateIban } from '../../src/banking/iban.js';
 import { SubscriberState, type Account, type SignatureClass } from '../../src/store/types.js';
@@ -23,6 +23,7 @@ import type { SqliteStore } from '../../src/store/sqlite-store.js';
 const SECOND_USER = 'USER2';
 const THIRD_USER = 'USER3';
 const OTHER_PARTNER = 'PARTNER9';
+const ORDER_ID = /^[A-Z][A-Z0-9]{3}$/;
 const FLAGS = ['EBICS_VOP_CONFIRMATION', 'EBICS_VOP_DEFAULT', 'EBICS_HAC_FORMAT', 'EBICS_HAC_DOWNLOAD_EVENTS'] as const;
 /** SignatureFlag without requestEDS: the EUs of the upload must authorise it */
 const SIGNED: UploadOptions = { scope: 'DE', serviceOption: 'VOI', signatureFlag: true };
@@ -319,6 +320,43 @@ describe('Electronic signatures (EUs)', () => {
       expect((await sendVeuSignature(a005, 'HVE', ref, { signatures: sessionSigner(a005, 'A006') })).code).toBe('091301');
       expect((await sendVeuSignature(a005, 'HVE', ref, { signatures: sessionSigner(a005, 'A005') })).code).toBe('000000');
       expect(statuses(orderId)).toEqual(['EXECUTED']);
+    });
+  });
+
+  describe('SPR (chapter 4.5: the EU of the subscriber over a dummy file with exactly one space)', () => {
+    const state = (userId: string) => ctx.store.getSubscriber(PARTNER_ID, userId)!.state;
+    const refused: { name: string; signatures: (c: Ctx) => EsSignatures }[] = [
+      { name: 'an EU over other data', signatures: (c) => ({ signatureDataXml: buildUserSignatureData('  ', [sessionSigner(c.uploader)]) }) },
+      { name: 'an EU made with another key', signatures: (c) => esSigner(PARTNER_ID, USER_ID, c.signer.keys) },
+      { name: 'the EU of another user of the customer', signatures: (c) => sessionSigner(c.signer) },
+      { name: 'an additional EU of another user', signatures: (c) => [sessionSigner(c.uploader), sessionSigner(c.signer)] },
+    ];
+
+    it('suspends the subscriber in the Initialisation phase with an OrderID and without TransactionID', async () => {
+      const result = await sendSpr(ctx.uploader);
+      expect([result.technicalCode, result.code]).toEqual(['000000', '000000']);
+      expect(result.orderId).toMatch(ORDER_ID);
+      expect(result.transactionId).toBeFalsy();
+      expect(state(USER_ID)).toBe(SubscriberState.SUSPENDED);
+      expect(state(SECOND_USER)).toBe(SubscriberState.READY);
+    });
+
+    it.each(refused)('refuses $name with 091301 and an OrderID, and keeps the subscriber ready', async ({ signatures }) => {
+      const result = await sendSpr(ctx.uploader, { signatures: signatures(ctx) });
+      expect([result.technicalCode, result.code]).toEqual(['000000', '091301']);
+      expect(result.orderId).toMatch(ORDER_ID);
+      expect(state(USER_ID)).toBe(SubscriberState.READY);
+      expect(state(SECOND_USER)).toBe(SubscriberState.READY);
+    });
+
+    it('refuses undecodable signature data with 091111', async () => {
+      expect((await sendSpr(ctx.uploader, { compressSignatureData: false })).code).toBe('091111');
+      expect(state(USER_ID)).toBe(SubscriberState.READY);
+    });
+
+    it('refuses an SPR request with an OrderID with the technical return code 091113 EBICS_INVALID_REQUEST_CONTENT (chapter 5.5)', async () => {
+      expect((await sendSpr(ctx.uploader, { orderId: 'A001' })).technicalCode).toBe('091113');
+      expect(state(USER_ID)).toBe(SubscriberState.READY);
     });
   });
 

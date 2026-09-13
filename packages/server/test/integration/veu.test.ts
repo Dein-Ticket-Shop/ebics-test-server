@@ -566,7 +566,7 @@ describe('VEU (distributed electronic signature)', () => {
   });
 
   describe('error codes', () => {
-    it('HVD and HVT: 091114 for unknown orders, 091120 for another partner', async () => {
+    it('HVD and HVT: 091114 for unknown orders, also when the PartnerID names another customer', async () => {
       const { ref } = await uploadTransfer(ctx, 'ERR-DL');
       const params = {
         HVD: (r: VeuOrderRef) => hvdOrderParams(r),
@@ -574,7 +574,7 @@ describe('VEU (distributed electronic signature)', () => {
       };
       for (const [orderType, build] of Object.entries(params)) {
         expect((await downloadWithOrderParams(ctx.signer, orderType, build({ ...ref, orderId: UNKNOWN_ORDER_ID }))).code, orderType).toBe('091114');
-        expect((await downloadWithOrderParams(ctx.signer, orderType, build({ ...ref, partnerId: OTHER_PARTNER }))).code, orderType).toBe('091120');
+        expect((await downloadWithOrderParams(ctx.signer, orderType, build({ ...ref, partnerId: OTHER_PARTNER }))).code, orderType).toBe('091114');
       }
     });
 
@@ -587,16 +587,30 @@ describe('VEU (distributed electronic signature)', () => {
       expect((await downloadWithOrderParams(ctx.signer, 'HVD', hvdOrderParams({ ...ref, orderId: UNKNOWN_ORDER_ID }))).code).toBe('091114');
     });
 
-    it('HVE and HVS: 091114 and 091120 for foreign orders, 091304, 091120 and 091301 for foreign signature data and 091111 for undecodable signature data', async () => {
+    it('HVE and HVS: 091114 for unknown orders, 091304, 091120 and 091301 for foreign signature data and 091111 for undecodable signature data', async () => {
       const { orderId, ref } = await uploadTransfer(ctx, 'ERR-SIG');
       for (const orderType of ['HVE', 'HVS'] as const) {
         expect((await sendVeuSignature(ctx.signer, orderType, { ...ref, orderId: UNKNOWN_ORDER_ID })).code, orderType).toBe('091114');
-        expect((await sendVeuSignature(ctx.signer, orderType, { ...ref, partnerId: OTHER_PARTNER })).code, orderType).toBe('091120');
+        expect((await sendVeuSignature(ctx.signer, orderType, { ...ref, partnerId: OTHER_PARTNER })).code, orderType).toBe('091114');
         expect((await sendVeuSignature(ctx.signer, orderType, ref, { signatures: esSigner(PARTNER_ID, 'NOBODY', ctx.signer.keys) })).code, orderType).toBe('091304');
         expect((await sendVeuSignature(ctx.signer, orderType, ref, { signatures: esSigner(OTHER_PARTNER, SECOND_USER, ctx.signer.keys) })).code, orderType).toBe('091120');
         // USER1's name with USER2's signature key
         expect((await sendVeuSignature(ctx.signer, orderType, ref, { signatures: esSigner(PARTNER_ID, USER_ID, ctx.signer.keys) })).code, orderType).toBe('091301');
         expect((await sendVeuSignature(ctx.signer, orderType, ref, { compressSignatureData: false })).code, orderType).toBe('091111');
+      }
+      expect(orderStatuses(orderId)).toEqual(['PENDING_EDS']);
+      expect(ctx.store.listOrderSignatures(PARTNER_ID, orderId)).toHaveLength(1);
+    });
+
+    it('a user of another customer: no orders in HVU/HVZ, 091007 for HVD/HVT and 090003 for HVE/HVS (no cross-customer signatures)', async () => {
+      const { orderId, ref } = await uploadTransfer(ctx, 'ERR-FOREIGN');
+      const foreign = await enrolSubscriber({ post: ctx.post, activate: ctx.activate, store: ctx.store, partnerId: OTHER_PARTNER, userId: SECOND_USER });
+      expect((await downloadWithOrderParams(foreign, 'HVU', hvuOrderParams())).code).toBe('090005');
+      expect((await downloadWithOrderParams(foreign, 'HVZ', hvzOrderParams())).code).toBe('090005');
+      expect((await downloadWithOrderParams(foreign, 'HVD', hvdOrderParams(ref))).code).toBe('091007');
+      expect((await downloadWithOrderParams(foreign, 'HVT', hvtOrderParams(ref, { completeOrderData: true }))).code).toBe('091007');
+      for (const orderType of ['HVE', 'HVS'] as const) {
+        expect((await sendVeuSignature(foreign, orderType, ref)).code, orderType).toBe('090003');
       }
       expect(orderStatuses(orderId)).toEqual(['PENDING_EDS']);
       expect(ctx.store.listOrderSignatures(PARTNER_ID, orderId)).toHaveLength(1);
