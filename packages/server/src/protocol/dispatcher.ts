@@ -5,7 +5,7 @@ import { handleHev } from '../handlers/hev.js';
 import { handleIni } from '../handlers/ini.js';
 import { handleHia } from '../handlers/hia.js';
 import { handleHpb } from '../handlers/hpb.js';
-import { getRootElementName, xpathString } from './xml-parser.js';
+import { getRootElementName, xpathSelect, xpathString } from './xml-parser.js';
 import { ReturnCode } from './return-codes.js';
 import { buildKeyManagementResponse, buildEbicsResponse, type EbicsResponseOptions } from './xml-builder.js';
 import { verifyAuthSignature, extractPublicKeyFromCertBase64 } from './xml-signature.js';
@@ -446,6 +446,8 @@ function handleUploadInit(
   const serviceName = xpathString('//ebics:BTUOrderParams/ebics:Service/ebics:ServiceName/text()', ctx.doc);
   const msgName = xpathString('//ebics:BTUOrderParams/ebics:Service/ebics:MsgName/text()', ctx.doc);
   const serviceOption = xpathString('//ebics:BTUOrderParams/ebics:Service/ebics:ServiceOption/text()', ctx.doc);
+  const signatureFlag =
+    (xpathSelect("//*[local-name()='BTUOrderParams']/*[local-name()='SignatureFlag']", ctx.doc) as Node[]).length > 0;
   const requestEds = xpathString('//ebics:BTUOrderParams/ebics:SignatureFlag/@requestEDS', ctx.doc) === 'true';
 
   const wrappedKey = xpathString('//ebics:body/ebics:DataTransfer/ebics:DataEncryptionInfo/ebics:TransactionKey/text()', ctx.doc);
@@ -477,6 +479,7 @@ function handleUploadInit(
     msgName: msgName ?? undefined,
     orderId,
     serviceOption: serviceOption ?? undefined,
+    signatureFlag,
     requestEds,
   });
 
@@ -554,7 +557,7 @@ function finalizeUpload(store: AppStore, transactionId: string): ReturnCode {
             tx.msgName,
             sub,
             store,
-            { orderId: tx.orderId, serviceOption: tx.serviceOption, requestEds: tx.requestEds },
+            { orderId: tx.orderId, serviceOption: tx.serviceOption, signatureFlag: tx.signatureFlag, requestEds: tx.requestEds },
           );
           break;
       }

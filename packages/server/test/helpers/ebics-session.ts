@@ -24,7 +24,7 @@ import {
 } from './test-client.js';
 import { parseXml, xpathSelect, xpathString } from '../../src/protocol/xml-parser.js';
 import { extractPublicKeyFromCertBase64 } from '../../src/protocol/xml-signature.js';
-import type { AppStore } from '../../src/store/types.js';
+import type { AppStore, SignatureClass } from '../../src/store/types.js';
 
 /** Posts an EBICS request and returns the response body */
 export type PostXml = (xml: string) => Promise<string>;
@@ -42,17 +42,22 @@ export interface EbicsSession {
   hiaBody: string;
 }
 
-/** Creates the subscriber if needed, sends INI and HIA, activates it and fetches the bank keys (HPB) */
+/**
+ * Creates the subscriber if needed, sends INI and HIA, activates it and fetches the bank keys (HPB).
+ * `signatureClass` sets the subscriber's signature class; otherwise the stored class (default E) is kept.
+ */
 export async function enrolSubscriber(options: {
   post: PostXml;
   activate: (partnerId: string, userId: string) => Promise<unknown>;
   store: AppStore;
   partnerId: string;
   userId: string;
+  signatureClass?: SignatureClass;
 }): Promise<EbicsSession> {
   const { post, store, partnerId, userId } = options;
   const keys = generateTestClientKeys();
   if (!store.getSubscriber(partnerId, userId)) store.createSubscriber(partnerId, userId);
+  if (options.signatureClass) store.updateSubscriberSettings(partnerId, userId, { signatureClass: options.signatureClass });
   const iniBody = await post(buildIniRequest(HOST_ID, partnerId, userId, keys));
   const hiaBody = await post(buildHiaRequest(HOST_ID, partnerId, userId, keys));
   await options.activate(partnerId, userId);
@@ -149,4 +154,10 @@ export function localTexts(xml: string, path: string): string[] {
 export function localAttribute(xml: string, name: string, attribute: string): string | null {
   const element = parseXml(xml).getElementsByTagNameNS('*', name).item(0);
   return element ? element.getAttribute(attribute) : null;
+}
+
+/** Attribute of every element with the given local name, in document order (null where it is missing) */
+export function localAttributes(xml: string, name: string, attribute: string): (string | null)[] {
+  const elements = parseXml(xml).getElementsByTagNameNS('*', name);
+  return Array.from({ length: elements.length }, (_, i) => elements.item(i)!.getAttribute(attribute));
 }

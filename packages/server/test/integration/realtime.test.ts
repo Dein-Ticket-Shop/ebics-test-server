@@ -13,7 +13,7 @@ import { buildPain001Document } from '../helpers/test-client.js';
 import { enrolSubscriber, uploadOrder, downloadOrder, type EbicsSession } from '../helpers/ebics-session.js';
 import type { Account } from '../../src/store/types.js';
 
-const FLAGS = ['EBICS_WSS_ONE_TIME_TOKEN', 'EBICS_EDS_HOLD', 'EBICS_HAC_FORMAT', 'EBICS_HAC_DOWNLOAD_EVENTS', 'EBICS_VOP_CONFIRMATION', 'EBICS_VOP_DEFAULT', 'EBICS_STRICT_VALIDATION'] as const;
+const FLAGS = ['EBICS_WSS_ONE_TIME_TOKEN', 'EBICS_HAC_FORMAT', 'EBICS_HAC_DOWNLOAD_EVENTS', 'EBICS_VOP_CONFIRMATION', 'EBICS_VOP_DEFAULT', 'EBICS_STRICT_VALIDATION'] as const;
 
 const BTF = {
   camt054: { SERVICE: 'STM', SCOPE: 'DE', OPTION: 'SCI', CONTTYPE: 'ZIP', MSGNAME: 'camt.054' },
@@ -304,7 +304,8 @@ describe('Real-time notifications', () => {
     });
 
     it('announce REP/VOP and REP/SCI for a held order and the statements once it is released', async () => {
-      process.env['EBICS_EDS_HOLD'] = 'true';
+      // A first signature (A) with requestEDS holds the order in the VEU
+      ctx.store.updateSubscriberSettings(PARTNER_ID, USER_ID, { signatureClass: 'A' });
       ctx.store.createBooking({ accountId: ctx.account.id, amountCents: 1_000_000, currency: 'EUR', valueDate: '2025-01-01', bookingDate: '2025-01-01', transactionCode: 'NTRF' });
       const creditor = bobAccount();
       const client = await open(basic(credentialsOf(await wssparam())));

@@ -29,7 +29,7 @@ export function handleHtd(
     .att('Status', userStatusFromState(subscriber.state))
     .txt(subscriber.userId);
   userInfo.ele(EBICS_NS.H005, 'Name').txt(subscriber.userId);
-  buildUserPermissions(userInfo, permittedOrderTypes(subscriber));
+  buildUserPermissions(userInfo, permittedOrderTypes(subscriber), subscriber.signatureClass);
 
   return root.end({ prettyPrint: true });
 }

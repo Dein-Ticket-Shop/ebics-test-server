@@ -33,7 +33,7 @@ export function handleHkd(
       .att('Status', userStatusFromState(sub.state))
       .txt(sub.userId);
     userInfo.ele(EBICS_NS.H005, 'Name').txt(sub.userId);
-    buildUserPermissions(userInfo, permittedOrderTypes(sub));
+    buildUserPermissions(userInfo, permittedOrderTypes(sub), sub.signatureClass);
   }
 
   return root.end({ prettyPrint: true });

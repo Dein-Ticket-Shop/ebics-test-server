@@ -1,5 +1,5 @@
 import type { XMLBuilder } from 'xmlbuilder2/lib/interfaces.js';
-import type { Account, HostConfig } from '../store/types.js';
+import type { Account, HostConfig, SignatureClass } from '../store/types.js';
 import { SubscriberState } from '../store/types.js';
 import { EBICS_NS } from '../protocol/constants.js';
 
@@ -121,10 +121,19 @@ export function buildPartnerInfo(
   }
 }
 
-/** Adds the Permission entries for a subscriber's UserInfo block. */
-export function buildUserPermissions(userInfo: XMLBuilder, orderTypes: OrderTypeInfo[]): void {
+/** AdminOrderTypes that send order data to the bank: their Permission carries the user's signature class */
+const UPLOAD_ORDER_TYPES: readonly string[] = ['BTU', 'HVE', 'HVS', 'PUB', 'HCA', 'HCS', 'SPR'];
+
+/**
+ * Adds the Permission entries for a subscriber's UserInfo block. Upload order types carry the signature class
+ * (AuthorisationLevel); the spec leaves it out for downloads.
+ */
+export function buildUserPermissions(userInfo: XMLBuilder, orderTypes: OrderTypeInfo[], signatureClass: SignatureClass): void {
   for (const ot of orderTypes) {
     const perm = userInfo.ele(EBICS_NS.H005, 'Permission');
+    if (UPLOAD_ORDER_TYPES.includes(ot.adminType)) {
+      perm.att('AuthorisationLevel', signatureClass);
+    }
     perm.ele(EBICS_NS.H005, 'AdminOrderType').txt(ot.adminType);
     if (ot.service) {
       addService(perm, ot.service);
@@ -135,9 +144,14 @@ export function buildUserPermissions(userInfo: XMLBuilder, orderTypes: OrderType
 /** AdminOrderTypes of the customer protocol; a subscriber may be denied them (090003) */
 export const PROTOCOL_ORDER_TYPES: readonly string[] = ['HAC', 'PTK'];
 
+/** AdminOrderTypes of the VEU that need a bank-technical signature; not permitted for signature class T (090003) */
+export const SIGNING_ORDER_TYPES: readonly string[] = ['HVE', 'HVS'];
+
 /** The order types listed as Permission for a subscriber in HKD/HTD */
-export function permittedOrderTypes(subscriber: { protocolDownloadsAllowed: boolean }): OrderTypeInfo[] {
-  return subscriber.protocolDownloadsAllowed
-    ? SUPPORTED_ORDER_TYPES
-    : SUPPORTED_ORDER_TYPES.filter((ot) => !PROTOCOL_ORDER_TYPES.includes(ot.adminType));
+export function permittedOrderTypes(subscriber: { protocolDownloadsAllowed: boolean; signatureClass: SignatureClass }): OrderTypeInfo[] {
+  return SUPPORTED_ORDER_TYPES.filter(
+    (ot) =>
+      (subscriber.protocolDownloadsAllowed || !PROTOCOL_ORDER_TYPES.includes(ot.adminType)) &&
+      (subscriber.signatureClass !== 'T' || !SIGNING_ORDER_TYPES.includes(ot.adminType)),
+  );
 }

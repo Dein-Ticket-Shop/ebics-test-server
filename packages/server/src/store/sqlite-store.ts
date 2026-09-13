@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { SignatureClass } from './types.js';
 import type { EbicsStore, Subscriber, SubscriberKeys, HostConfig, BankKeys, ActivityLogEntry, ProtocolLogEntry, Transaction, TransactionPhase, DownloadData, BankingStore, BankConfig, Person, Account, Booking, AppStore, UploadedOrder } from './types.js';
 import type {
   DateFilter,
@@ -46,9 +47,11 @@ export class SqliteStore implements AppStore {
     this.ensureColumn('transactions', 'delivery_kind', 'TEXT');
     this.ensureColumn('transactions', 'delivery_keys', 'TEXT');
     this.ensureColumn('uploaded_orders', 'order_id', 'TEXT');
-    this.ensureColumn('payment_orders', 'signatures_required', 'INTEGER NOT NULL DEFAULT 1');
+    this.ensureColumn('transactions', 'signature_flag', 'INTEGER NOT NULL DEFAULT 0');
     this.ensureColumn('payment_orders', 'vop_confirmation_required', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('payment_order_signatures', 'signature_class', 'TEXT');
     this.ensureColumn('subscribers', 'protocol_downloads_allowed', 'INTEGER NOT NULL DEFAULT 1');
+    this.ensureColumn('subscribers', 'signature_class', "TEXT NOT NULL DEFAULT 'E'");
     this.migrateDownloadDataServiceOption();
   }
 
@@ -168,11 +171,25 @@ export class SqliteStore implements AppStore {
     ).run(...values, partnerId, userId);
   }
 
-  setSubscriberProtocolDownloads(partnerId: string, userId: string, allowed: boolean): void {
-    this.db.prepare(`
-      UPDATE subscribers SET protocol_downloads_allowed = ?, updated_at = datetime('now')
-      WHERE partner_id = ? AND user_id = ?
-    `).run(allowed ? 1 : 0, partnerId, userId);
+  updateSubscriberSettings(
+    partnerId: string,
+    userId: string,
+    settings: Partial<Pick<Subscriber, 'protocolDownloadsAllowed' | 'signatureClass'>>,
+  ): void {
+    const sets: string[] = [];
+    const values: (string | number)[] = [];
+    if (settings.protocolDownloadsAllowed !== undefined) {
+      sets.push('protocol_downloads_allowed = ?');
+      values.push(settings.protocolDownloadsAllowed ? 1 : 0);
+    }
+    if (settings.signatureClass !== undefined) {
+      sets.push('signature_class = ?');
+      values.push(settings.signatureClass);
+    }
+    if (sets.length === 0) return;
+
+    sets.push("updated_at = datetime('now')");
+    this.db.prepare(`UPDATE subscribers SET ${sets.join(', ')} WHERE partner_id = ? AND user_id = ?`).run(...values, partnerId, userId);
   }
 
   deleteSubscriber(partnerId: string, userId: string): void {
@@ -272,14 +289,14 @@ export class SqliteStore implements AppStore {
     const expires = new Date(Date.now() + 3600_000).toISOString().replace('T', ' ').replace('Z', '');
 
     this.db.prepare(`
-      INSERT INTO transactions (transaction_id, partner_id, user_id, host_id, direction, phase, order_type, num_segments, current_segment, segments, transaction_key, enc_key_digest, signature_data, service_name, msg_name, order_id, service_option, request_eds, delivery_kind, delivery_keys, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO transactions (transaction_id, partner_id, user_id, host_id, direction, phase, order_type, num_segments, current_segment, segments, transaction_key, enc_key_digest, signature_data, service_name, msg_name, order_id, service_option, request_eds, signature_flag, delivery_kind, delivery_keys, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       tx.transactionId, tx.partnerId, tx.userId, tx.hostId,
       tx.direction, tx.phase, tx.orderType, tx.numSegments, tx.currentSegment,
       JSON.stringify(tx.segments), tx.transactionKey, tx.encKeyDigest,
       tx.signatureData ?? null, tx.serviceName ?? null, tx.msgName ?? null,
-      tx.orderId ?? null, tx.serviceOption ?? null, tx.requestEds ? 1 : 0,
+      tx.orderId ?? null, tx.serviceOption ?? null, tx.requestEds ? 1 : 0, tx.signatureFlag ? 1 : 0,
       tx.deliveryKind ?? null, tx.deliveryKeys ? JSON.stringify(tx.deliveryKeys) : null,
       now, expires,
     );
@@ -660,6 +677,7 @@ export class SqliteStore implements AppStore {
       orderId: (row['order_id'] as string) ?? undefined,
       serviceOption: (row['service_option'] as string) ?? undefined,
       requestEds: row['request_eds'] === 1,
+      signatureFlag: row['signature_flag'] === 1,
       deliveryKind: (row['delivery_kind'] as DeliveryKind) ?? undefined,
       deliveryKeys: row['delivery_keys'] ? JSON.parse(row['delivery_keys'] as string) : undefined,
       createdAt: row['created_at'] as string,
@@ -792,12 +810,12 @@ export class SqliteStore implements AppStore {
     const created = this.db.transaction(() => {
       const result = this.db.prepare(`
         INSERT INTO payment_orders (order_id, uploaded_order_id, partner_id, user_id, service_name, service_option, msg_name,
-          msg_id, pmt_inf_id, debtor_name, debtor_iban, requested_eds, signatures_required, vop_confirmation_required, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          msg_id, pmt_inf_id, debtor_name, debtor_iban, requested_eds, vop_confirmation_required, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         order.orderId, order.uploadedOrderId ?? null, order.partnerId, order.userId, order.serviceName,
         order.serviceOption ?? null, order.msgName, order.msgId, order.pmtInfId, order.debtorName ?? null,
-        order.debtorIban ?? null, order.requestedEds ? 1 : 0, order.signaturesRequired ?? 1, order.vopConfirmationRequired ? 1 : 0, order.status,
+        order.debtorIban ?? null, order.requestedEds ? 1 : 0, order.vopConfirmationRequired ? 1 : 0, order.status,
       );
       const id = Number(result.lastInsertRowid);
       const insertTx = this.db.prepare(`
@@ -887,10 +905,16 @@ export class SqliteStore implements AppStore {
 
   // VEU signatures
 
-  addOrderSignature(signature: { partnerId: string; orderId: string; userId: string; kind: OrderSignatureKind }): OrderSignature {
+  addOrderSignature(signature: {
+    partnerId: string;
+    orderId: string;
+    userId: string;
+    kind: OrderSignatureKind;
+    signatureClass: SignatureClass;
+  }): OrderSignature {
     const result = this.db.prepare(`
-      INSERT INTO payment_order_signatures (partner_id, order_id, user_id, kind) VALUES (?, ?, ?, ?)
-    `).run(signature.partnerId, signature.orderId, signature.userId, signature.kind);
+      INSERT INTO payment_order_signatures (partner_id, order_id, user_id, kind, signature_class) VALUES (?, ?, ?, ?, ?)
+    `).run(signature.partnerId, signature.orderId, signature.userId, signature.kind, signature.signatureClass);
     const row = this.db.prepare('SELECT * FROM payment_order_signatures WHERE id = ?').get(Number(result.lastInsertRowid)) as Row;
     return this.rowToOrderSignature(row);
   }
@@ -907,6 +931,8 @@ export class SqliteStore implements AppStore {
       orderId: row['order_id'] as string,
       userId: row['user_id'] as string,
       kind: row['kind'] as OrderSignatureKind,
+      // Signatures from before signature classes existed count as first signatures
+      signatureClass: (row['signature_class'] as SignatureClass | null) ?? 'A',
       signedAt: row['signed_at'] as string,
     };
   }
@@ -937,7 +963,6 @@ export class SqliteStore implements AppStore {
       debtorName: (row['debtor_name'] as string) ?? undefined,
       debtorIban: (row['debtor_iban'] as string) ?? undefined,
       requestedEds: row['requested_eds'] === 1,
-      signaturesRequired: row['signatures_required'] as number,
       vopConfirmationRequired: row['vop_confirmation_required'] === 1,
       status: row['status'] as PaymentOrderStatus,
       createdAt: row['created_at'] as string,
@@ -1010,6 +1035,7 @@ export class SqliteStore implements AppStore {
         encryptionCertificate: row['encryption_certificate'] ?? undefined,
       },
       protocolDownloadsAllowed: Number(row['protocol_downloads_allowed'] ?? 1) !== 0,
+      signatureClass: (row['signature_class'] as SignatureClass | null) ?? 'E',
       createdAt: row['created_at']!,
       updatedAt: row['updated_at']!,
     };

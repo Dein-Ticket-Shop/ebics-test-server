@@ -389,7 +389,7 @@ export function buildEbicsUploadInitRequest(
   const authDigest = computeCertDigest(bankCerts.authCertPem);
   const encDigest = computeCertDigest(bankCerts.encCertPem);
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>BTU</AdminOrderType><BTUOrderParams xmlns="urn:org:ebics:H005"><Service><ServiceName>${serviceName}</ServiceName>${options.scope ? `<Scope>${options.scope}</Scope>` : ''}${options.serviceOption ? `<ServiceOption>${options.serviceOption}</ServiceOption>` : ''}<MsgName>${msgName}</MsgName></Service>${options.requestEds ? '<SignatureFlag requestEDS="true"/>' : ''}</BTUOrderParams></OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0000</SecurityMedium><NumSegments>${enc.numSegments}</NumSegments></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body><DataTransfer><DataEncryptionInfo authenticate="true"><EncryptionPubKeyDigest Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</EncryptionPubKeyDigest><TransactionKey>${enc.wrappedKey}</TransactionKey></DataEncryptionInfo><SignatureData authenticate="true">${enc.signatureDataB64}</SignatureData><DataDigest SignatureVersion="A006">${enc.dataDigest}</DataDigest></DataTransfer></body></ebicsRequest>`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><ebicsRequest xmlns="urn:org:ebics:H005" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Version="H005" Revision="1"><header authenticate="true"><static><HostID>${hostId}</HostID><Nonce>${nonce}</Nonce><Timestamp>${timestamp}</Timestamp><PartnerID>${partnerId}</PartnerID><UserID>${userId}</UserID><OrderDetails><AdminOrderType>BTU</AdminOrderType><BTUOrderParams xmlns="urn:org:ebics:H005"><Service><ServiceName>${serviceName}</ServiceName>${options.scope ? `<Scope>${options.scope}</Scope>` : ''}${options.serviceOption ? `<ServiceOption>${options.serviceOption}</ServiceOption>` : ''}<MsgName>${msgName}</MsgName></Service>${signatureFlagXml(options)}</BTUOrderParams></OrderDetails><BankPubKeyDigests><Authentication Version="X002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${authDigest}</Authentication><Encryption Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</Encryption></BankPubKeyDigests><SecurityMedium>0000</SecurityMedium><NumSegments>${enc.numSegments}</NumSegments></static><mutable><TransactionPhase>Initialisation</TransactionPhase></mutable></header><AuthSignature/><body><DataTransfer><DataEncryptionInfo authenticate="true"><EncryptionPubKeyDigest Version="E002" Algorithm="http://www.w3.org/2001/04/xmlenc#sha256">${encDigest}</EncryptionPubKeyDigest><TransactionKey>${enc.wrappedKey}</TransactionKey></DataEncryptionInfo><SignatureData authenticate="true">${enc.signatureDataB64}</SignatureData><DataDigest SignatureVersion="A006">${enc.dataDigest}</DataDigest></DataTransfer></body></ebicsRequest>`;
 
   return signEbicsRequest(xml, keys.authKeyPair.privateKey);
 }
@@ -445,8 +445,15 @@ export interface DownloadParams {
 export interface UploadOptions {
   scope?: string;
   serviceOption?: string;
-  /** BTUOrderParams/SignatureFlag/@requestEDS */
+  /** BTUOrderParams/SignatureFlag/@requestEDS; implies the SignatureFlag */
   requestEds?: boolean;
+  /** BTUOrderParams/SignatureFlag is sent; defaults to requestEds, so `{ signatureFlag: true }` alone sends it without requestEDS */
+  signatureFlag?: boolean;
+}
+
+function signatureFlagXml(options: UploadOptions): string {
+  if (options.requestEds) return '<SignatureFlag requestEDS="true"/>';
+  return options.signatureFlag ? '<SignatureFlag/>' : '';
 }
 
 function dateRangeXml(range?: DateRange): string {

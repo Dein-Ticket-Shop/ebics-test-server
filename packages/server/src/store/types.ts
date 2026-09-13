@@ -20,6 +20,9 @@ export interface SubscriberKeys {
   encryptionCertificate?: string;
 }
 
+/** EBICS signature class: E single, A first, B second signature; T transport signature (cannot authorise orders) */
+export type SignatureClass = 'E' | 'A' | 'B' | 'T';
+
 export interface Subscriber {
   partnerId: string;
   userId: string;
@@ -27,6 +30,8 @@ export interface Subscriber {
   keys: SubscriberKeys;
   /** May download the customer protocol (HAC, PTK); otherwise 090003. Set per subscriber in the admin API/UI. */
   protocolDownloadsAllowed: boolean;
+  /** Class of this user's electronic signatures; decides whether uploads execute, wait in the VEU or are rejected */
+  signatureClass: SignatureClass;
   createdAt: string;
   updatedAt: string;
 }
@@ -93,6 +98,8 @@ export interface Transaction {
   /** EBICS OrderID allocated for uploads (returned in the upload responses) */
   orderId?: string;
   serviceOption?: string;
+  /** BTUOrderParams/SignatureFlag is present: the upload is authorised within EBICS */
+  signatureFlag?: boolean;
   /** BTUOrderParams/SignatureFlag/@requestEDS of an upload */
   requestEds?: boolean;
   /** Download items handed out by this transaction, marked delivered on a positive receipt */
@@ -134,7 +141,11 @@ export interface EbicsStore {
   listSubscribers(): Subscriber[];
   updateSubscriberState(partnerId: string, userId: string, state: SubscriberState): void;
   updateSubscriberKeys(partnerId: string, userId: string, keys: Partial<SubscriberKeys>): void;
-  setSubscriberProtocolDownloads(partnerId: string, userId: string, allowed: boolean): void;
+  updateSubscriberSettings(
+    partnerId: string,
+    userId: string,
+    settings: Partial<Pick<Subscriber, 'protocolDownloadsAllowed' | 'signatureClass'>>,
+  ): void;
   deleteSubscriber(partnerId: string, userId: string): void;
 
   storeNonce(nonce: string, timestamp: string): void;
@@ -315,8 +326,6 @@ export interface PaymentOrder {
   debtorName?: string;
   debtorIban?: string;
   requestedEds: boolean;
-  /** Distinct users whose signatures release the order (the upload's own signature counts) */
-  signaturesRequired: number;
   /** Held until an electronic signature (HVE) confirms a VoP result other than RCVC */
   vopConfirmationRequired: boolean;
   status: PaymentOrderStatus;
@@ -349,8 +358,8 @@ export interface PaymentStatusEvent {
   createdAt: string;
 }
 
-export type NewPaymentOrder = Omit<PaymentOrder, 'id' | 'createdAt' | 'updatedAt' | 'signaturesRequired' | 'vopConfirmationRequired'> &
-  Partial<Pick<PaymentOrder, 'signaturesRequired' | 'vopConfirmationRequired'>>;
+export type NewPaymentOrder = Omit<PaymentOrder, 'id' | 'createdAt' | 'updatedAt' | 'vopConfirmationRequired'> &
+  Partial<Pick<PaymentOrder, 'vopConfirmationRequired'>>;
 export type NewPaymentTransaction = Omit<PaymentTransaction, 'id' | 'paymentOrderId'>;
 
 /** Download services that hand out each item once when no DateRange is requested */
@@ -365,6 +374,8 @@ export interface OrderSignature {
   orderId: string;
   userId: string;
   kind: OrderSignatureKind;
+  /** Class the signature counts as: the signer's class when signing, T for uploads without SignatureFlag */
+  signatureClass: SignatureClass;
   signedAt: string;
 }
 
@@ -400,7 +411,13 @@ export interface OrderLedgerStore {
   }): PaymentStatusEvent;
   listPaymentStatusEvents(filter?: { paymentOrderId?: number; partnerId?: string } & DateFilter): PaymentStatusEvent[];
 
-  addOrderSignature(signature: { partnerId: string; orderId: string; userId: string; kind: OrderSignatureKind }): OrderSignature;
+  addOrderSignature(signature: {
+    partnerId: string;
+    orderId: string;
+    userId: string;
+    kind: OrderSignatureKind;
+    signatureClass: SignatureClass;
+  }): OrderSignature;
   listOrderSignatures(partnerId: string, orderId: string): OrderSignature[];
 
   /** Emits 'booking' (Booking), 'paymentOrder' (PaymentOrder), 'paymentStatus' (PaymentStatusEvent), 'hacEvent' (HacEvent) */

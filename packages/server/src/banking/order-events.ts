@@ -58,10 +58,10 @@ export function recordUploadCompleted(store: AppStore, ctx: OrderContext, protoc
   recordFinal(store, ctx, true, protocolText);
 }
 
-/** Upload received but the order data was refused */
-export function recordUploadRejected(store: AppStore, ctx: OrderContext, message: string): void {
+/** Upload received but the order was refused: TD03 for the order data, DS19 for insufficient signature rights */
+export function recordUploadRejected(store: AppStore, ctx: OrderContext, message: string, reasonCode = 'TD03'): void {
   recordEvent(store, ctx, 'FILE_UPLOAD', { reasonCode: 'TS01' });
-  recordEvent(store, ctx, 'ES_VERIFICATION', { reasonCode: 'TD03', additionalInfo: [message] });
+  recordEvent(store, ctx, 'ES_VERIFICATION', { reasonCode, additionalInfo: [message] });
   recordFinal(store, ctx, false, [message]);
 }
 

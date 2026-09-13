@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
     encryption_version TEXT,
     encryption_certificate TEXT,
     protocol_downloads_allowed INTEGER NOT NULL DEFAULT 1,
+    signature_class TEXT NOT NULL DEFAULT 'E',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (partner_id, user_id)
@@ -197,7 +198,6 @@ CREATE TABLE IF NOT EXISTS payment_orders (
     debtor_name TEXT,
     debtor_iban TEXT,
     requested_eds INTEGER NOT NULL DEFAULT 0,
-    signatures_required INTEGER NOT NULL DEFAULT 1,
     vop_confirmation_required INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS payment_order_signatures (
     order_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
     kind TEXT NOT NULL,
+    signature_class TEXT,
     signed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 

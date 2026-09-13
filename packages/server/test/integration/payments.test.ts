@@ -29,7 +29,7 @@ import { calculateIban } from '../../src/banking/iban.js';
 import type { SqliteStore } from '../../src/store/sqlite-store.js';
 import type { Account } from '../../src/store/types.js';
 
-const FLAGS = ['EBICS_HAC_FORMAT', 'EBICS_EDS_HOLD', 'EBICS_VOP_DEFAULT'] as const;
+const FLAGS = ['EBICS_HAC_FORMAT', 'EBICS_VOP_DEFAULT'] as const;
 const SCI: UploadOptions = { scope: 'DE', serviceOption: 'VOI', requestEds: true };
 const PSR: DownloadParams = { serviceName: 'REP', scope: 'DE', serviceOption: 'SCI', containerType: 'ZIP', msgName: 'pain.002' };
 const VOP: DownloadParams = { serviceName: 'REP', scope: 'DE', serviceOption: 'VOP', containerType: 'ZIP', msgName: 'pain.002' };
@@ -170,7 +170,7 @@ describe('Payments, reports and customer protocol', () => {
     });
   });
 
-  describe('SEPA Instant without EDS hold', () => {
+  describe('SEPA Instant by a subscriber with signature class E', () => {
     it('books immediately and reports ACTC then ACSC per PmtInfId', async () => {
       const { initBody } = await upload(ctx, buildPain001Document({ msgId: 'MSG-NOW', payments: [payment(ctx, 'NOW')] }));
 
@@ -228,9 +228,10 @@ describe('Payments, reports and customer protocol', () => {
     });
   });
 
-  describe('SEPA Instant with EDS hold', () => {
+  describe('SEPA Instant held in the VEU (signature class A)', () => {
     beforeEach(() => {
-      process.env['EBICS_EDS_HOLD'] = 'true';
+      // A first signature (A) with requestEDS waits in the VEU for a second signature
+      ctx.store.updateSubscriberSettings(PARTNER_ID, USER_ID, { signatureClass: 'A' });
     });
 
     it('holds the order until release, then books and reports ACSC', async () => {
@@ -238,7 +239,9 @@ describe('Payments, reports and customer protocol', () => {
       const [order] = ctx.store.listPaymentOrders();
       expect(order!.status).toBe('PENDING_EDS');
       expect(ctx.store.getAccount(ctx.debtor.id)!.currentBalanceCents).toBe(1_000_000);
-      expect(ctx.store.listHacEvents({ orderId: order!.orderId }).map((e) => e.action)).toEqual(['FILE_UPLOAD', 'ES_VERIFICATION', 'VEU_FORWARDING']);
+      const held = ctx.store.listHacEvents({ orderId: order!.orderId });
+      expect(held.map((e) => e.action)).toEqual(['FILE_UPLOAD', 'ES_VERIFICATION', 'VEU_FORWARDING']);
+      expect(held[2]).toMatchObject({ reasonCode: 'DS06', additionalInfo: ['Unterschriftsklasse A: weitere Unterschrift erforderlich'] });
 
       const released = await api(ctx, `/payments/${order!.id}/release`, { method: 'POST' });
       expect(released.status).toBe(200);
@@ -295,7 +298,7 @@ describe('Payments, reports and customer protocol', () => {
       expect(defaultReason.statusEvents.at(-1)).toMatchObject({ status: 'RJCT', reasonCode: 'DS04' });
     });
 
-    it('executes uploads without requestEDS immediately even with the hold on', async () => {
+    it('executes uploads without SignatureFlag immediately even for signature class A', async () => {
       await upload(ctx, buildPain001Document({ msgId: 'MSG-NOEDS', payments: [payment(ctx, 'NOEDS')] }), { scope: 'DE', serviceOption: 'VOI' });
       expect(ctx.store.listPaymentOrders()[0]!.status).toBe('EXECUTED');
     });
@@ -431,17 +434,20 @@ describe('Payments, reports and customer protocol', () => {
 
   describe('admin API', () => {
     it('exposes the feature flags', async () => {
-      expect((await api(ctx, '/config/flags')).json).toMatchObject({
-        hacFormat: 'legacy', edsHold: false, vopDefault: 'RCVC', strictValidation: true, allowPreActivation: false,
+      const defaults = (await api(ctx, '/config/flags')).json;
+      expect(defaults).toMatchObject({
+        hacFormat: 'legacy', vopDefault: 'RCVC', strictValidation: true, allowPreActivation: false,
       });
+      // VEU holds follow the subscriber's signature class, there is no EDS hold flag any more
+      expect(defaults).not.toHaveProperty('edsHold');
       process.env['EBICS_HAC_FORMAT'] = 'pain.002';
-      process.env['EBICS_EDS_HOLD'] = 'true';
       process.env['EBICS_VOP_DEFAULT'] = 'RVNA';
-      expect((await api(ctx, '/config/flags')).json).toMatchObject({ hacFormat: 'pain.002', edsHold: true, vopDefault: 'RVNA' });
+      expect((await api(ctx, '/config/flags')).json).toMatchObject({ hacFormat: 'pain.002', vopDefault: 'RVNA' });
     });
 
     it('lists, filters and reports payment orders', async () => {
-      process.env['EBICS_EDS_HOLD'] = 'true';
+      const patched = await api(ctx, `/subscribers/${PARTNER_ID}/${USER_ID}`, { method: 'PATCH', body: { signatureClass: 'A' } });
+      expect(patched.json.signatureClass).toBe('A');
       await upload(ctx, buildPain001Document({ msgId: 'MSG-API', payments: [payment(ctx, 'API1'), payment(ctx, 'API2')] }));
 
       const all = await api(ctx, '/payments');

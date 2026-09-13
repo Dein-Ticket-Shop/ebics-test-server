@@ -36,14 +36,14 @@ function addService(parent: XMLBuilder, order: PaymentOrder): void {
   service.ele(NS, 'MsgName').txt(order.msgName);
 }
 
-function addSignerInfo(parent: XMLBuilder, signature: OrderSignature, index: number): void {
+function addSignerInfo(parent: XMLBuilder, signature: OrderSignature): void {
   const signer = parent.ele(NS, 'SignerInfo');
   signer.ele(NS, 'PartnerID').txt(signature.partnerId);
   signer.ele(NS, 'UserID').txt(signature.userId);
   signer.ele(NS, 'Name').txt(signature.userId);
   signer.ele(NS, 'Timestamp').txt(signature.signedAt);
-  // The upload's signature is a first signature (A), later ones are second signatures (B)
-  signer.ele(NS, 'Permission').att('AuthorisationLevel', index === 0 ? 'A' : 'B');
+  // The signature class the signer had when signing
+  signer.ele(NS, 'Permission').att('AuthorisationLevel', signature.signatureClass);
 }
 
 /** Order must belong to the requesting partner and be waiting for signatures */
@@ -98,10 +98,10 @@ export function handleHvz(
 
     details
       .ele(NS, 'SigningInfo')
-      .att('readyToBeSigned', String(canSign(veu, subscriber.userId)))
+      .att('readyToBeSigned', String(canSign(veu, subscriber)))
       .att('NumSigRequired', String(numSigRequired(veu)))
       .att('NumSigDone', String(veu.signatures.length));
-    veu.signatures.forEach((signature, index) => addSignerInfo(details, signature, index));
+    for (const signature of veu.signatures) addSignerInfo(details, signature);
 
     const originator = details.ele(NS, 'OriginatorInfo');
     originator.ele(NS, 'PartnerID').txt(first.partnerId);
@@ -127,7 +127,7 @@ export function handleHvd(
   root.ele(NS, 'OrderDataAvailable').txt('true');
   root.ele(NS, 'OrderDataSize').txt(String(Math.max(1, Buffer.byteLength(veu.rawContent))));
   root.ele(NS, 'OrderDetailsAvailable').txt('true');
-  veu.signatures.forEach((signature, index) => addSignerInfo(root, signature, index));
+  for (const signature of veu.signatures) addSignerInfo(root, signature);
   return { documents: [{ name: 'hvd.xml', content: root.end({ prettyPrint: true }) }] };
 }
 

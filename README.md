@@ -15,7 +15,7 @@ inspect every request and response.
 - Generic upload and download: BTU and BTD with BTF service parameters
 - Payment processing: parses pain.001 credit transfers and pain.008 direct debits
 - SEPA Instant uploads (BTU SCI pain.001) as payment orders with Verification of Payee and a payment status history
-- Optional EDS hold: uploads that request a distributed signature wait in the VEU until a second user signs or an admin releases, cancels or rejects them
+- Signature classes per subscriber (E, A, B, T): uploads by a user whose class does not authorise the order alone wait in the VEU when they request a distributed signature (otherwise `091301`), until users with class E, A or B sign or an admin releases, cancels or rejects them. Class T is a technical user that can only submit orders
 - VEU order types HVZ, HVD, HVT, HVE and HVS to list, inspect, sign and cancel held orders (signatures are parsed, not cryptographically verified)
 - Optional VoP confirmation: credit transfers without a full payee match (RCVC) wait for an HVE signature or an admin release
 - EBICS OrderIDs on uploads and INI/HIA, echoed in every response of the transaction
@@ -63,8 +63,19 @@ pnpm dev
 
 Then open http://localhost:4150/admin.
 
-The subscriber page switches protocol downloads (HAC, PTK) on or off for that subscriber
-(`PATCH /api/subscribers/:partnerId/:userId` with `{ "protocolDownloadsAllowed": false }`).
+The subscriber page sets the signature class and switches protocol downloads (HAC, PTK) on or off for that
+subscriber (`PATCH /api/subscribers/:partnerId/:userId` with `{ "signatureClass": "T" }` or
+`{ "protocolDownloadsAllowed": false }`; `POST /api/subscribers` accepts both too). New subscribers have class E,
+so their uploads execute immediately. Signature classes follow EBICS 3.0.2 chapter 11.2.3:
+
+| Class | Meaning | Upload with `requestEDS` | Upload with SignatureFlag, no `requestEDS` | HVE/HVS |
+| ----- | ------- | ------------------------ | ------------------------------------------ | ------- |
+| `E`   | single signature | executed | executed | allowed |
+| `A`   | first signature | waits in the VEU for another E, A or B signature | `091301` | allowed |
+| `B`   | second signature | waits in the VEU for another E or A signature | `091301` | allowed |
+| `T`   | transport signature (technical user) | waits in the VEU for signatures of other users | `091301` | `090003` |
+
+Uploads without SignatureFlag are authorised outside EBICS and executed; their signature counts as `T`.
 Next to subscribers and banking data, the UI has pages for payment orders, the customer protocol, the
 VEU (sign or cancel held orders as a chosen user), Real-time (open connections, tokens, test messages)
 and Download Data (seed files per service, message name and ServiceOption). Host Config lists every
@@ -117,7 +128,6 @@ All settings are read from the environment:
 | `EBICS_ALLOW_PREACTIVATION`| `false`          | Allow HPB before the subscriber is activated |
 | `EBICS_STRICT_VALIDATION`  | `true`           | Reject uploads with malformed IBAN or BIC (returns `090004`); set `false` to relax |
 | `EBICS_HAC_FORMAT`         | `legacy`         | HAC order data format; `pain.002` returns the pain.002.001.03 customer protocol real banks send |
-| `EBICS_EDS_HOLD`           | `false`          | Hold uploads with `requestEDS="true"` in the VEU until a second user signs (HVE) or an admin releases them |
 | `EBICS_VOP_DEFAULT`        | `RCVC`           | VoP result for creditors not held at this bank (`RCVC`, `RVMC`, `RVNM`, `RVNA`) |
 | `EBICS_VOP_CONFIRMATION`   | `false`          | Hold credit transfers whose VoP group result is not `RCVC` until an HVE signature or an admin release |
 | `EBICS_HAC_DOWNLOAD_EVENTS`| `false`          | Add a `FILE_DOWNLOAD` event to the customer protocol for every download except HAC and PTK |

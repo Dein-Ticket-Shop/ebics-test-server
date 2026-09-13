@@ -16,7 +16,6 @@ import type { Account, HacEvent } from '../../src/store/types.js';
 
 const FLAGS = [
   'EBICS_HAC_FORMAT',
-  'EBICS_EDS_HOLD',
   'EBICS_VOP_DEFAULT',
   'EBICS_VOP_CONFIRMATION',
   'EBICS_HAC_DOWNLOAD_EVENTS',
@@ -157,7 +156,8 @@ describe('Customer protocol extras', () => {
 
     it('prints BTF, Bezug and additional info lines below an event', async () => {
       ctx = await setup();
-      process.env['EBICS_EDS_HOLD'] = 'true';
+      // A first signature (A) with requestEDS holds the order in the VEU
+      ctx.store.updateSubscriberSettings(PARTNER_ID, USER_ID, { signatureClass: 'A' });
       const creditor = prepareAccounts(ctx);
       await uploadOrder(ctx.session, creditTransfer(ctx, creditor, 'PTK'));
       const [order] = ctx.store.listPaymentOrders();

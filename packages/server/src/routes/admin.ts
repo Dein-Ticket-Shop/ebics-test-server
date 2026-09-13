@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import type { AppStore } from '../store/types.js';
+import type { AppStore, Subscriber } from '../store/types.js';
 import { SubscriberState } from '../store/types.js';
 import { generateBankKeys } from '../bank/bank-keys.js';
 import { createBankingAdminRoute } from './admin-banking.js';
@@ -12,7 +12,6 @@ import { recordSubscriberActivated } from '../banking/order-events.js';
 import {
   allowPreActivation,
   describeEnvFlags,
-  edsHold,
   hacDownloadEvents,
   hacFormat,
   vopConfirmationRequired,
@@ -20,6 +19,27 @@ import {
   wssOneTimeTokens,
 } from '../config/feature-flags.js';
 import { isStrictValidation } from '../banking/validation.js';
+import { SIGNATURE_CLASSES, isSignatureClass } from '../banking/signatures.js';
+
+type SubscriberSettings = Partial<Pick<Subscriber, 'protocolDownloadsAllowed' | 'signatureClass'>>;
+type SubscriberSettingsInput = { protocolDownloadsAllowed?: unknown; signatureClass?: unknown };
+
+/** Validates subscriber settings: optional on POST /subscribers, at least one on PATCH */
+function parseSubscriberSettings(input: SubscriberSettingsInput, required: boolean): SubscriberSettings | { error: string } {
+  const settings: SubscriberSettings = {};
+  if (input.protocolDownloadsAllowed !== undefined) {
+    if (typeof input.protocolDownloadsAllowed !== 'boolean') return { error: 'protocolDownloadsAllowed must be a boolean' };
+    settings.protocolDownloadsAllowed = input.protocolDownloadsAllowed;
+  }
+  if (input.signatureClass !== undefined) {
+    if (!isSignatureClass(input.signatureClass)) return { error: `signatureClass must be one of ${SIGNATURE_CLASSES.join(', ')}` };
+    settings.signatureClass = input.signatureClass;
+  }
+  if (required && Object.keys(settings).length === 0) {
+    return { error: 'protocolDownloadsAllowed or signatureClass is required' };
+  }
+  return settings;
+}
 
 export function createAdminRoute(store: AppStore, hostId?: string, realtime: RealtimeHub = new RealtimeHub(store)) {
   const app = new Hono();
@@ -60,10 +80,12 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
   });
 
   app.post('/subscribers', async (c) => {
-    const body = await c.req.json<{ partnerId: string; userId: string }>();
+    const body = await c.req.json<{ partnerId: string; userId: string } & SubscriberSettingsInput>();
     if (!body?.partnerId || !body?.userId) {
       return c.json({ error: 'partnerId and userId are required' }, 400);
     }
+    const settings = parseSubscriberSettings(body, false);
+    if ('error' in settings) return c.json({ error: settings.error }, 400);
 
     if (store.getSubscriber(body.partnerId, body.userId)) {
       return c.json(
@@ -72,7 +94,9 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
       );
     }
 
-    const subscriber = store.createSubscriber(body.partnerId, body.userId);
+    store.createSubscriber(body.partnerId, body.userId);
+    store.updateSubscriberSettings(body.partnerId, body.userId, settings);
+    const subscriber = store.getSubscriber(body.partnerId, body.userId)!;
     store.logActivity({
       eventType: 'subscriber_created',
       partnerId: body.partnerId,
@@ -92,22 +116,18 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
     return c.json(subscriber);
   });
 
-  /** Per-subscriber settings: { protocolDownloadsAllowed: boolean } allows or refuses HAC and PTK (090003) */
+  /**
+   * Per-subscriber settings: protocolDownloadsAllowed (HAC and PTK, otherwise 090003) and signatureClass (E, A, B
+   * or T: whether uploads execute, wait in the VEU or are rejected, and whether the user can sign in the VEU)
+   */
   app.patch('/subscribers/:partnerId/:userId', async (c) => {
     const { partnerId, userId } = c.req.param();
     if (!store.getSubscriber(partnerId, userId)) return c.json({ error: 'Not found' }, 404);
-    const body = (await c.req.json().catch(() => ({}))) as { protocolDownloadsAllowed?: unknown };
-    if (typeof body.protocolDownloadsAllowed !== 'boolean') {
-      return c.json({ error: 'protocolDownloadsAllowed (boolean) is required' }, 400);
-    }
+    const settings = parseSubscriberSettings((await c.req.json().catch(() => ({}))) as SubscriberSettingsInput, true);
+    if ('error' in settings) return c.json({ error: settings.error }, 400);
 
-    store.setSubscriberProtocolDownloads(partnerId, userId, body.protocolDownloadsAllowed);
-    store.logActivity({
-      eventType: 'subscriber_updated',
-      partnerId,
-      userId,
-      details: { protocolDownloadsAllowed: body.protocolDownloadsAllowed },
-    });
+    store.updateSubscriberSettings(partnerId, userId, settings);
+    store.logActivity({ eventType: 'subscriber_updated', partnerId, userId, details: { ...settings } });
     return c.json(store.getSubscriber(partnerId, userId));
   });
 
@@ -267,7 +287,6 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
   app.get('/config/flags', (c) => {
     return c.json({
       hacFormat: hacFormat(),
-      edsHold: edsHold(),
       vopDefault: vopDefaultStatus(),
       strictValidation: isStrictValidation(),
       allowPreActivation: allowPreActivation(),

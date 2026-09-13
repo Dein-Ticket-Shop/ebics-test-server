@@ -209,21 +209,53 @@ describe('order ledger store', () => {
         old.close();
 
         const migrated = new SqliteStore(path);
-        expect(migrated.getTransaction('TX1')).toMatchObject({ orderType: 'HPD', requestEds: false, orderId: undefined, deliveryKeys: undefined });
+        expect(migrated.getTransaction('TX1')).toMatchObject({ orderType: 'HPD', requestEds: false, signatureFlag: false, orderId: undefined, deliveryKeys: undefined });
         expect(migrated.listUploadedOrders()[0]).toMatchObject({ serviceName: 'SCT', orderId: undefined });
 
         migrated.createTransaction({
           transactionId: 'TX2', partnerId: 'P1', userId: 'U1', hostId: 'H', direction: 'upload', phase: 'Transfer',
           orderType: 'BTU', numSegments: 1, currentSegment: 0, segments: [], transactionKey: 'k', encKeyDigest: '',
-          orderId: 'A000', serviceOption: 'VOI', requestEds: true, deliveryKind: 'hac', deliveryKeys: ['hac:1'],
+          orderId: 'A000', serviceOption: 'VOI', signatureFlag: true, requestEds: true, deliveryKind: 'hac', deliveryKeys: ['hac:1'],
         });
-        expect(migrated.getTransaction('TX2')).toMatchObject({ orderId: 'A000', serviceOption: 'VOI', requestEds: true, deliveryKind: 'hac', deliveryKeys: ['hac:1'] });
+        expect(migrated.getTransaction('TX2')).toMatchObject({ orderId: 'A000', serviceOption: 'VOI', signatureFlag: true, requestEds: true, deliveryKind: 'hac', deliveryKeys: ['hac:1'] });
 
         // Opening again is idempotent
         expect(() => new SqliteStore(path)).not.toThrow();
 
         const columns = (new Database(path).prepare('PRAGMA table_info(transactions)').all() as { name: string }[]).map((c) => c.name);
-        expect(columns).toEqual(expect.arrayContaining(['order_id', 'service_option', 'request_eds', 'delivery_kind', 'delivery_keys']));
+        expect(columns).toEqual(expect.arrayContaining(['order_id', 'service_option', 'request_eds', 'signature_flag', 'delivery_kind', 'delivery_keys']));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('adds the signature class to order signatures; signatures from before count as first signatures (A)', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'ebics-migrate-'));
+      const path = join(dir, 'old.db');
+      try {
+        const old = new Database(path);
+        old.exec(`
+          CREATE TABLE payment_order_signatures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, partner_id TEXT NOT NULL, order_id TEXT NOT NULL, user_id TEXT NOT NULL,
+            kind TEXT NOT NULL, signed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          );
+          INSERT INTO payment_order_signatures (partner_id, order_id, user_id, kind) VALUES ('P1', 'A000', 'U1', 'UPLOAD');
+        `);
+        old.close();
+
+        const migrated = new SqliteStore(path);
+        const added = migrated.addOrderSignature({ partnerId: 'P1', orderId: 'A000', userId: 'U2', kind: 'HVE', signatureClass: 'B' });
+        expect(added).toMatchObject({ partnerId: 'P1', orderId: 'A000', userId: 'U2', kind: 'HVE', signatureClass: 'B' });
+        migrated.addOrderSignature({ partnerId: 'P1', orderId: 'A000', userId: 'U3', kind: 'UPLOAD', signatureClass: 'T' });
+        expect(migrated.listOrderSignatures('P1', 'A000').map((s) => [s.userId, s.kind, s.signatureClass])).toEqual([
+          ['U1', 'UPLOAD', 'A'],
+          ['U2', 'HVE', 'B'],
+          ['U3', 'UPLOAD', 'T'],
+        ]);
+
+        const columns = (new Database(path).prepare('PRAGMA table_info(payment_order_signatures)').all() as { name: string }[]).map((c) => c.name);
+        expect(columns).toContain('signature_class');
+        expect(() => new SqliteStore(path)).not.toThrow();
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

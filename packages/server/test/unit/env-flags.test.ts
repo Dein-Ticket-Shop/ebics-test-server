@@ -3,7 +3,6 @@ import {
   ENV_FLAGS,
   allowPreActivation,
   describeEnvFlags,
-  edsHold,
   hacDownloadEvents,
   hacFormat,
   strictValidation,
@@ -47,7 +46,10 @@ describe('environment flags', () => {
     expect(flags.every((f) => f.type === 'boolean' || f.type === 'enum')).toBe(true);
     // protocol downloads are a per-subscriber setting, not an environment flag
     expect(ENV_NAMES).not.toContain('EBICS_HAC_DENY_PARTNERS');
-    expect(flags.find((f) => f.key === 'edsHold')).not.toHaveProperty('options');
+    expect(flags.find((f) => f.key === 'hacDownloadEvents')).not.toHaveProperty('options');
+    // VEU holds follow the subscriber's signature class, not an environment flag
+    expect(ENV_NAMES).not.toContain('EBICS_EDS_HOLD');
+    expect(flags.map((f) => f.key)).not.toContain('edsHold');
   });
 
   it('keeps the getter defaults', () => {
@@ -56,7 +58,6 @@ describe('environment flags', () => {
     expect(isStrictValidation()).toBe(true);
     expect(allowPreActivation()).toBe(false);
     expect(hacFormat()).toBe('legacy');
-    expect(edsHold()).toBe(false);
     expect(vopDefaultStatus()).toBe('RCVC');
     expect(vopConfirmationRequired()).toBe(false);
     expect(hacDownloadEvents()).toBe(false);
@@ -68,37 +69,37 @@ describe('environment flags', () => {
     process.env['EBICS_STRICT_VALIDATION'] = '0';
     process.env['EBICS_ALLOW_PREACTIVATION'] = '1';
     process.env['EBICS_HAC_FORMAT'] = 'pain.002';
-    process.env['EBICS_EDS_HOLD'] = 'true';
+    process.env['EBICS_HAC_DOWNLOAD_EVENTS'] = 'true';
     process.env['EBICS_VOP_DEFAULT'] = 'RVNM';
 
     const byKey = Object.fromEntries(describeEnvFlags().map((f) => [f.key, f]));
     expect(byKey['strictValidation']).toMatchObject({ value: false, raw: '0', ignored: false });
     expect(byKey['allowPreActivation']).toMatchObject({ value: true, raw: '1' });
     expect(byKey['hacFormat']).toMatchObject({ value: 'pain.002', raw: 'pain.002' });
-    expect(byKey['edsHold']).toMatchObject({ value: true });
+    expect(byKey['hacDownloadEvents']).toMatchObject({ value: true, raw: 'true' });
     expect(byKey['vopDefault']).toMatchObject({ value: 'RVNM' });
 
     expect(strictValidation()).toBe(false);
     expect(isStrictValidation()).toBe(false);
     expect(allowPreActivation()).toBe(true);
     expect(hacFormat()).toBe('pain.002');
-    expect(edsHold()).toBe(true);
+    expect(hacDownloadEvents()).toBe(true);
     expect(vopDefaultStatus()).toBe('RVNM');
   });
 
   it('marks unrecognised values as ignored and applies the default', () => {
     clearFlags();
-    process.env['EBICS_EDS_HOLD'] = 'yes';
+    process.env['EBICS_HAC_DOWNLOAD_EVENTS'] = 'yes';
     process.env['EBICS_STRICT_VALIDATION'] = 'off';
     process.env['EBICS_VOP_DEFAULT'] = 'NOPE';
     process.env['EBICS_HAC_FORMAT'] = 'legacy';
 
     const byKey = Object.fromEntries(describeEnvFlags().map((f) => [f.key, f]));
-    expect(byKey['edsHold']).toMatchObject({ value: false, raw: 'yes', ignored: true });
+    expect(byKey['hacDownloadEvents']).toMatchObject({ value: false, raw: 'yes', ignored: true });
     expect(byKey['strictValidation']).toMatchObject({ value: true, raw: 'off', ignored: true });
     expect(byKey['vopDefault']).toMatchObject({ value: 'RCVC', raw: 'NOPE', ignored: true });
     expect(byKey['hacFormat']).toMatchObject({ value: 'legacy', raw: 'legacy', ignored: false });
-    expect(edsHold()).toBe(false);
+    expect(hacDownloadEvents()).toBe(false);
     expect(strictValidation()).toBe(true);
     expect(vopDefaultStatus()).toBe('RCVC');
   });

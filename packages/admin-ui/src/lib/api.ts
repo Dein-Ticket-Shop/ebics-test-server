@@ -68,7 +68,11 @@ export const reactivateSubscriber = (partnerId: string, userId: string) =>
   json<Subscriber>(`${API}/subscribers/${encodeURIComponent(partnerId)}/${encodeURIComponent(userId)}/reactivate`, {
     method: 'POST',
   });
-export const updateSubscriber = (partnerId: string, userId: string, patch: { protocolDownloadsAllowed: boolean }) =>
+export const updateSubscriber = (
+  partnerId: string,
+  userId: string,
+  patch: Partial<Pick<Subscriber, 'protocolDownloadsAllowed' | 'signatureClass'>>,
+) =>
   json<Subscriber>(`${API}/subscribers/${encodeURIComponent(partnerId)}/${encodeURIComponent(userId)}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),

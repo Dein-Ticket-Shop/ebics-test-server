@@ -15,6 +15,9 @@ export interface SubscriberKeys {
   encryptionCertificate?: string;
 }
 
+/** EBICS signature class: E single, A first, B second signature; T transport signature (technical user) */
+export type SignatureClass = 'E' | 'A' | 'B' | 'T';
+
 export interface Subscriber {
   partnerId: string;
   userId: string;
@@ -22,6 +25,8 @@ export interface Subscriber {
   keys: SubscriberKeys;
   /** May download the customer protocol (HAC, PTK); otherwise 090003 */
   protocolDownloadsAllowed: boolean;
+  /** Class of this user's electronic signatures; T cannot sign or authorise orders */
+  signatureClass: SignatureClass;
   createdAt: string;
   updatedAt: string;
 }
@@ -176,8 +181,6 @@ export interface PaymentOrder {
   debtorName?: string;
   debtorIban?: string;
   requestedEds: boolean;
-  /** Distinct users whose signatures release the order (2 with EDS hold, else 1) */
-  signaturesRequired: number;
   /** Held until a signature confirms a VoP result other than RCVC */
   vopConfirmationRequired: boolean;
   status: PaymentOrderStatus;
@@ -245,7 +248,6 @@ export type DeliveryKind = 'camt.054' | 'psr' | 'vop' | 'hac' | 'ptk';
 
 export interface ServerFlags {
   hacFormat: 'legacy' | 'pain.002';
-  edsHold: boolean;
   vopDefault: VopStatus;
   strictValidation: boolean;
   allowPreActivation: boolean;
@@ -281,6 +283,7 @@ export interface OrderSignature {
   orderId: string;
   userId: string;
   kind: 'UPLOAD' | 'HVE';
+  signatureClass: SignatureClass;
   signedAt: string;
 }
 
@@ -300,12 +303,13 @@ export interface VeuOrder {
   currency: string;
   vopGroupStatus: VopStatus;
   transactions: PaymentTransaction[];
+  /** bank-technical signatures (E, A, B) */
   signatures: OrderSignature[];
   /** distinct signing users */
   signaturesDone: number;
-  /** distinct users needed */
-  signaturesRequired: number;
-  /** what HVZ reports (one more while a VoP confirmation is pending) */
+  /** the signatures authorise the order: one E, or two users with at least one E or A */
+  signaturesComplete: boolean;
+  /** what HVZ reports: one more than done while the order waits */
   numSigRequired: number;
   vopConfirmationRequired: boolean;
   vopConfirmed: boolean;

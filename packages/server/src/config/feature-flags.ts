@@ -92,15 +92,6 @@ export const ENV_FLAGS = {
     options: ['legacy', 'pain.002'],
     defaultValue: 'legacy',
   }),
-  edsHold: booleanFlag({
-    env: 'EBICS_EDS_HOLD',
-    label: 'Hold EDS uploads in the VEU',
-    description:
-      'Credit transfer uploads that request a distributed electronic signature ' +
-      '(`SignatureFlag/@requestEDS="true"`) are held in the VEU until a second user signs with HVE or an admin ' +
-      'releases, cancels or rejects them. Nothing is booked while an order is held. By default every upload is ' +
-      'executed and booked immediately.',
-  }),
   vopDefault: enumFlag<VopStatus>({
     env: 'EBICS_VOP_DEFAULT',
     label: 'VoP result for other banks',
@@ -169,10 +160,6 @@ export function allowPreActivation(): boolean {
 
 export function hacFormat(): HacFormat {
   return read(ENV_FLAGS.hacFormat);
-}
-
-export function edsHold(): boolean {
-  return read(ENV_FLAGS.edsHold);
 }
 
 export function vopDefaultStatus(): VopStatus {

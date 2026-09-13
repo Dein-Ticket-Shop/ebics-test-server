@@ -29,6 +29,18 @@ export class OrderAuthError extends Error {
 }
 
 /**
+ * Thrown when an upload with SignatureFlag carries no signature that authorises it (signature class A, B or T)
+ * and does not request the VEU. The BTU handler maps it to EBICS_SIGNATURE_VERIFICATION_FAILED (091301); the
+ * customer protocol shows DS19 (signature rights insufficient).
+ */
+export class SignatureAuthorisationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SignatureAuthorisationError';
+  }
+}
+
+/**
  * Validate the ordering party's own account: the debtor for a credit transfer
  * (pain.001), the creditor for a direct debit (pain.008). Under strict mode the
  * account must exist at this bank and the uploading partner must have access to

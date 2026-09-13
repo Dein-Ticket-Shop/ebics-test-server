@@ -2,15 +2,18 @@ import type { Subscriber, AppStore } from '../store/types.js';
 import { ReturnCode } from '../protocol/return-codes.js';
 import { processPain001 } from '../banking/processors/pain001.js';
 import { processPain008 } from '../banking/processors/pain008.js';
-import { OrderDataError, OrderAuthError } from '../banking/validation.js';
+import { OrderDataError, OrderAuthError, SignatureAuthorisationError } from '../banking/validation.js';
 import { directDebitProtocolText, receiveCreditTransfers } from '../banking/payments.js';
 import { recordUploadCompleted, recordUploadRejected, type OrderContext } from '../banking/order-events.js';
+import { uploadDecision, uploadSignatureClass } from '../banking/signatures.js';
 import { logError } from '../logger.js';
 
 /** Upload transaction attributes the order lifecycle needs (set by the dispatcher) */
 export interface BtuOrderContext {
   orderId?: string;
   serviceOption?: string;
+  /** BTUOrderParams/SignatureFlag is present: the order is authorised within EBICS */
+  signatureFlag?: boolean;
   /** BTUOrderParams/SignatureFlag/@requestEDS */
   requestEds?: boolean;
 }
@@ -45,10 +48,19 @@ export function handleBtu(
       }
     : undefined;
 
+  const signatureFlag = context.signatureFlag ?? false;
+  const requestEds = context.requestEds ?? false;
+  const signatureClass = uploadSignatureClass(signatureFlag, subscriber.signatureClass);
+
   try {
+    if (uploadDecision({ signatureFlag, requestEds, signatureClass }) === 'reject') {
+      throw new SignatureAuthorisationError(
+        `Unterschriftsklasse ${signatureClass} von ${subscriber.userId} reicht nicht aus und keine VEU angefordert`,
+      );
+    }
     if (msgName === 'pain.001') {
       if (context.orderId) {
-        // Payment orders with VoP, payment status history, HAC events and optional EDS hold
+        // Payment orders with VoP, payment status history, HAC events and the VEU for missing signatures
         receiveCreditTransfers(store, {
           rawContent,
           partnerId: subscriber.partnerId,
@@ -58,7 +70,9 @@ export function handleBtu(
           serviceName,
           serviceOption: context.serviceOption,
           msgName,
-          requestEds: context.requestEds ?? false,
+          signatureFlag,
+          requestEds,
+          signatureClass: subscriber.signatureClass,
         });
       } else {
         processPain001(rawContent, store, subscriber.partnerId);
@@ -75,7 +89,8 @@ export function handleBtu(
     // best-effort — upload is still stored, left unprocessed
     logError(`${msgName ?? serviceName} processing`, err);
     if (events) {
-      recordUploadRejected(store, events, err instanceof Error ? err.message : String(err));
+      const reasonCode = err instanceof SignatureAuthorisationError ? 'DS19' : 'TD03';
+      recordUploadRejected(store, events, err instanceof Error ? err.message : String(err), reasonCode);
     }
     // Malformed IBAN/BIC under strict validation: bounce the file like a real bank.
     if (err instanceof OrderDataError) {
@@ -84,6 +99,10 @@ export function handleBtu(
     // Ordering-party account unknown or partner not authorised for it.
     if (err instanceof OrderAuthError) {
       return ReturnCode.EBICS_ACCOUNT_AUTHORISATION_FAILED;
+    }
+    // Signature flag set, but the uploader's signature class does not authorise the order and no VEU was requested.
+    if (err instanceof SignatureAuthorisationError) {
+      return ReturnCode.EBICS_SIGNATURE_VERIFICATION_FAILED;
     }
   }
 

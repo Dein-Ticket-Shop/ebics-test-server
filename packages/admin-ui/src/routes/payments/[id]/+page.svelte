@@ -145,9 +145,7 @@
     <div>
       <div class="font-medium text-warning mb-1">Awaiting electronic distributed signature</div>
       <ul class="list-disc ml-5 mb-1">
-        {#if p.signaturesRequired > 1}
-          <li>Waiting for a second signature</li>
-        {/if}
+        <li>Waiting for electronic signatures (HVE) of users with signature class E, A or B</li>
         {#if p.vopConfirmationRequired}
           <li>Waiting for VoP confirmation</li>
         {/if}

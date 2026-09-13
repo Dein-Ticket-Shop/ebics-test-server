@@ -32,12 +32,6 @@
   </div>
 </div>
 
-{#if data.flags && !data.flags.edsHold}
-  <div class="bg-info/10 border border-info/20 rounded-xl p-4 mb-6 text-sm">
-    EDS hold is off (<span class="font-mono">EBICS_EDS_HOLD</span>). Uploads with requestEDS are executed immediately.
-  </div>
-{/if}
-
 {#if data.payments.length === 0}
   <div class="text-center py-16 text-base-content/40">
     <Icon name="payments" class="w-12 h-12 mx-auto mb-3 opacity-30" />

@@ -25,14 +25,16 @@
   const usersOf = (o: VeuOrder) => data.subscribers.filter((s) => s.partnerId === o.partnerId);
   const hasSigned = (o: VeuOrder, userId: string) => o.signatures.some((s) => s.userId === userId);
   const confirmationPending = (o: VeuOrder) => o.vopConfirmationRequired && !o.vopConfirmed;
-  const canSign = (o: VeuOrder, userId: string) => !hasSigned(o, userId) || confirmationPending(o);
+  /** Same rule as the server: class E, A or B, and not signed yet unless confirming a VoP result */
+  const canSign = (o: VeuOrder, user: Subscriber) =>
+    user.signatureClass !== 'T' && (!hasSigned(o, user.userId) || confirmationPending(o));
 
   function signer(o: VeuOrder): string {
-    return signAs[key(o)] ?? usersOf(o).find((u) => canSign(o, u.userId))?.userId ?? '';
+    return signAs[key(o)] ?? usersOf(o).find((u) => canSign(o, u))?.userId ?? '';
   }
 
   function canceller(o: VeuOrder): string {
-    return cancelAs[key(o)] ?? usersOf(o)[0]?.userId ?? '';
+    return cancelAs[key(o)] ?? usersOf(o).find((u) => u.signatureClass !== 'T')?.userId ?? '';
   }
 
   function handlePartnerFilter(e: Event) {
@@ -104,8 +106,8 @@
   <div class="font-medium text-info mb-1">When orders wait here</div>
   <ul class="list-disc ml-5 space-y-1">
     <li>
-      <span class="font-mono">EBICS_EDS_HOLD=true</span> and the upload requested EDS: a second user has to sign.
-      <span class="badge badge-xs {data.flags?.edsHold ? 'badge-success' : 'badge-ghost'}">{data.flags?.edsHold ? 'on' : 'off'}</span>
+      The upload requested EDS and the uploader's signature class does not authorise it alone: class A or B needs a
+      further signature, class T (technical user) needs signatures of other users. The class is set on the subscriber page.
     </li>
     <li>
       <span class="font-mono">EBICS_VOP_CONFIRMATION=true</span> and the VoP result is not RCVC: one signature confirms it.
@@ -181,6 +183,7 @@
             {#each o.signatures as sig (sig.id)}
               <div class="text-xs mt-0.5">
                 <span class="font-mono">{sig.userId}</span>
+                <span class="badge badge-outline badge-xs font-mono" title="Signature class">{sig.signatureClass}</span>
                 <span class="badge badge-ghost badge-xs">{sig.kind}</span>
                 <span class="text-base-content/50">{formatDateTime(sig.signedAt)}</span>
               </div>
@@ -231,8 +234,8 @@
                 onchange={(e) => (signAs[k] = (e.currentTarget as HTMLSelectElement).value)}
               >
                 {#each users as user (user.userId)}
-                  <option value={user.userId} disabled={!canSign(o, user.userId)}>
-                    {user.userId}{hasSigned(o, user.userId) ? ' (signed)' : ''}
+                  <option value={user.userId} disabled={!canSign(o, user)}>
+                    {user.userId} · {user.signatureClass}{hasSigned(o, user.userId) ? ' · signed' : ''}
                   </option>
                 {/each}
               </select>
@@ -252,7 +255,7 @@
                 onchange={(e) => (cancelAs[k] = (e.currentTarget as HTMLSelectElement).value)}
               >
                 {#each users as user (user.userId)}
-                  <option value={user.userId}>{user.userId}</option>
+                  <option value={user.userId} disabled={user.signatureClass === 'T'}>{user.userId} · {user.signatureClass}</option>
                 {/each}
               </select>
             </div>

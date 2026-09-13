@@ -5,7 +5,7 @@
   import CertFingerprint from '$lib/components/CertFingerprint.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { activateSubscriber, suspendSubscriber, reactivateSubscriber, deleteSubscriber, updateSubscriber } from '$lib/api.js';
-  import type { Subscriber } from '$lib/types.js';
+  import type { SignatureClass, Subscriber } from '$lib/types.js';
 
   interface Props {
     data: { subscriber: Subscriber };
@@ -52,21 +52,60 @@
     }
   }
 
+  const SIGNATURE_CLASS_OPTIONS: { value: SignatureClass; label: string; description: string }[] = [
+    {
+      value: 'E',
+      label: 'single signature',
+      description: 'Authorises an order alone: uploads with a signature flag are executed immediately.',
+    },
+    {
+      value: 'A',
+      label: 'first signature',
+      description:
+        'Needs a further signature of another user with class E, A or B. Uploads requesting EDS wait in the VEU, other uploads with a signature flag are rejected with 091301.',
+    },
+    {
+      value: 'B',
+      label: 'second signature',
+      description:
+        'Needs a further signature of another user with class E or A. Uploads requesting EDS wait in the VEU, other uploads with a signature flag are rejected with 091301.',
+    },
+    {
+      value: 'T',
+      label: 'transport signature (technical user)',
+      description:
+        'Submits orders without authorising them. Uploads requesting EDS wait in the VEU for other users, other uploads with a signature flag are rejected with 091301. Cannot sign (HVE) or cancel (HVS) orders.',
+    },
+  ];
+  const signatureClassOption = $derived(
+    SIGNATURE_CLASS_OPTIONS.find((option) => option.value === sub.signatureClass) ?? SIGNATURE_CLASS_OPTIONS[0]!,
+  );
+
   let savingPermissions = $state(false);
 
-  async function handleProtocolDownloads(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const allowed = input.checked;
+  async function saveSettings(patch: Partial<Pick<Subscriber, 'protocolDownloadsAllowed' | 'signatureClass'>>, revert: () => void) {
     savingPermissions = true;
     try {
-      await updateSubscriber(sub.partnerId, sub.userId, { protocolDownloadsAllowed: allowed });
+      await updateSubscriber(sub.partnerId, sub.userId, patch);
       await invalidateAll();
     } catch (err) {
-      input.checked = !allowed;
+      revert();
       alert(err instanceof Error ? err.message : 'Update failed');
     } finally {
       savingPermissions = false;
     }
+  }
+
+  function handleProtocolDownloads(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const allowed = input.checked;
+    saveSettings({ protocolDownloadsAllowed: allowed }, () => (input.checked = !allowed));
+  }
+
+  function handleSignatureClass(e: Event) {
+    const select = e.currentTarget as HTMLSelectElement;
+    const previous = sub.signatureClass;
+    saveSettings({ signatureClass: select.value as SignatureClass }, () => (select.value = previous));
   }
 
   async function handleDelete() {
@@ -155,7 +194,24 @@
 
 <!-- Permissions -->
 <h2 class="text-lg font-semibold mb-4">Permissions</h2>
-<div class="bg-base-200 rounded-xl p-4 mb-6">
+<div class="bg-base-200 rounded-xl p-4 mb-6 flex flex-col gap-4">
+  <div class="flex items-start gap-3">
+    <select
+      class="select select-bordered select-sm font-mono w-20 shrink-0"
+      aria-label="Signature class"
+      value={sub.signatureClass}
+      disabled={savingPermissions}
+      onchange={handleSignatureClass}
+    >
+      {#each SIGNATURE_CLASS_OPTIONS as option (option.value)}
+        <option value={option.value}>{option.value}</option>
+      {/each}
+    </select>
+    <span class="min-w-0">
+      <span class="text-sm font-medium">Signature class {sub.signatureClass}: {signatureClassOption.label}</span>
+      <span class="block text-xs text-base-content/50 mt-0.5">{signatureClassOption.description}</span>
+    </span>
+  </div>
   <label class="flex items-start gap-3 cursor-pointer">
     <input
       type="checkbox"

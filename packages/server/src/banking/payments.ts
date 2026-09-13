@@ -3,10 +3,13 @@ import type {
   PaymentOrder,
   PaymentStatusCode,
   PaymentTransaction,
+  SignatureClass,
   VopStatus,
 } from '../store/types.js';
 import { parseXml } from '../protocol/xml-parser.js';
-import { edsHold, vopConfirmationRequired } from '../config/feature-flags.js';
+import { vopConfirmationRequired } from '../config/feature-flags.js';
+import { uploadDecision, uploadSignatureClass } from './signatures.js';
+import { SignatureAuthorisationError } from './validation.js';
 import { vopGroupStatus } from './generators/pain002.js';
 import { xpathSelect } from '../protocol/xml-parser.js';
 import { bookCreditTransfer, parsePain001, validatePain001 } from './processors/pain001.js';
@@ -23,7 +26,11 @@ export interface CreditTransferUpload {
   serviceName: string;
   serviceOption?: string;
   msgName: string;
+  /** BTUOrderParams/SignatureFlag is present; defaults to requestEds, which cannot be sent without the flag */
+  signatureFlag?: boolean;
   requestEds: boolean;
+  /** The uploader's signature class; defaults to the subscriber's class in the store */
+  signatureClass?: SignatureClass;
 }
 
 /** Thrown for admin actions that do not fit the order's current state */
@@ -94,11 +101,22 @@ export function creditTransferProtocolText(store: AppStore, orders: PaymentOrder
 
 /**
  * Registers a validated pain.001 upload as payment orders (one per PmtInf) with VoP results and an
- * ACTC status. Executes it immediately unless it requests EDS and EBICS_EDS_HOLD is on, in which
- * case it waits in the VEU for release. Throws OrderDataError / OrderAuthError before anything is
- * stored when the file is refused.
+ * ACTC status. Executes it immediately when the upload has no SignatureFlag or the uploader's signature
+ * class authorises it; with requestEDS it otherwise waits in the VEU for further signatures. Throws
+ * OrderDataError / OrderAuthError / SignatureAuthorisationError before anything is stored when the
+ * file is refused.
  */
 export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUpload): PaymentOrder[] {
+  const signatureFlag = upload.signatureFlag ?? upload.requestEds;
+  const subscriberClass = upload.signatureClass ?? store.getSubscriber(upload.partnerId, upload.userId)?.signatureClass ?? 'E';
+  const signatureClass = uploadSignatureClass(signatureFlag, subscriberClass);
+  const decision = uploadDecision({ signatureFlag, requestEds: upload.requestEds, signatureClass });
+  if (decision === 'reject') {
+    throw new SignatureAuthorisationError(
+      `Unterschriftsklasse ${signatureClass} von ${upload.userId} reicht nicht aus und keine VEU angefordert`,
+    );
+  }
+
   const doc = parseXml(upload.rawContent);
   const instructions = parsePain001(doc);
   validatePain001(doc, instructions, store, upload.partnerId);
@@ -111,10 +129,10 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
     }),
   }));
 
-  const edsRequired = upload.requestEds && edsHold();
+  const signatureHold = decision === 'veu';
   const vopGroup = vopGroupStatus(verified.flatMap((v) => v.transactions.map((tx) => tx.vopStatus)));
   const vopHold = vopConfirmationRequired() && verified.length > 0 && vopGroup !== 'RCVC';
-  const hold = edsRequired || vopHold;
+  const hold = signatureHold || vopHold;
 
   const orders = verified.map(({ instruction, transactions }) =>
     store.createPaymentOrder(
@@ -131,7 +149,6 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
         debtorName: instruction.debtorName,
         debtorIban: instruction.debtorIban,
         requestedEds: upload.requestEds,
-        signaturesRequired: edsRequired ? 2 : 1,
         vopConfirmationRequired: vopHold,
         status: 'PENDING_EDS',
       },
@@ -141,8 +158,14 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
   for (const order of orders) {
     store.appendPaymentStatusEvent({ paymentOrderId: order.id, status: 'ACTC' });
   }
-  // The electronic signature sent with the upload is the order's first VEU signature
-  store.addOrderSignature({ partnerId: upload.partnerId, orderId: upload.orderId, userId: upload.userId, kind: 'UPLOAD' });
+  // The electronic signature sent with the upload; as a transport signature (T) it does not count in the VEU
+  store.addOrderSignature({
+    partnerId: upload.partnerId,
+    orderId: upload.orderId,
+    userId: upload.userId,
+    kind: 'UPLOAD',
+    signatureClass,
+  });
 
   const ctx = orderContext(upload);
   recordEvent(store, ctx, 'FILE_UPLOAD', { reasonCode: 'TS01' });
@@ -151,7 +174,10 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
   if (hold) {
     recordEvent(store, ctx, 'VEU_FORWARDING', {
       reasonCode: 'DS06',
-      additionalInfo: vopHold ? [`Empfaengerueberpruefung ${vopGroup}: Bestaetigung per Unterschrift erforderlich`] : [],
+      additionalInfo: [
+        ...(signatureHold ? [`Unterschriftsklasse ${signatureClass}: weitere Unterschrift erforderlich`] : []),
+        ...(vopHold ? [`Empfaengerueberpruefung ${vopGroup}: Bestaetigung per Unterschrift erforderlich`] : []),
+      ],
     });
   } else {
     executeOrders(store, orders);

@@ -52,7 +52,7 @@ const bookings: Booking[] = [
 const order: PaymentOrder = {
   id: 1, orderId: 'A001', partnerId: 'P1', userId: 'U1', serviceName: 'SCI', serviceOption: 'VOI', msgName: 'pain.001',
   msgId: 'MSG-0001', pmtInfId: 'PMT-0001', debtorName: 'Shop', debtorIban: account.iban, requestedEds: true,
-  signaturesRequired: 1, vopConfirmationRequired: false, status: 'EXECUTED',
+  vopConfirmationRequired: false, status: 'EXECUTED',
   createdAt: '2026-09-12T10:00:00.000Z', updatedAt: '2026-09-12T10:00:00.000Z',
 };
 
@@ -245,7 +245,7 @@ describe('ISO 20022 payload validation', () => {
   });
 
   describe('dispatcher', () => {
-    const FLAGS = ['EBICS_HAC_FORMAT', 'EBICS_EDS_HOLD', 'EBICS_VOP_DEFAULT', 'EBICS_VOP_CONFIRMATION', 'EBICS_STRICT_VALIDATION', 'EBICS_HAC_DOWNLOAD_EVENTS'] as const;
+    const FLAGS = ['EBICS_HAC_FORMAT', 'EBICS_VOP_DEFAULT', 'EBICS_VOP_CONFIRMATION', 'EBICS_STRICT_VALIDATION', 'EBICS_HAC_DOWNLOAD_EVENTS'] as const;
     const saved: Record<string, string | undefined> = {};
 
     beforeEach(() => {

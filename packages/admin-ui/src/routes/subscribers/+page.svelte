@@ -90,6 +90,7 @@
             <td>
               <div class="flex flex-wrap items-center gap-1">
                 <StateBadge state={sub.state} />
+                <span class="badge badge-sm badge-outline font-mono" title="Signature class">class {sub.signatureClass}</span>
                 {#if !sub.protocolDownloadsAllowed}
                   <span class="badge badge-sm badge-warning" title="HAC and PTK downloads are refused with 090003">no HAC/PTK</span>
                 {/if}

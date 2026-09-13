@@ -140,7 +140,7 @@
 - [x] Delivery tracking: items handed out without DateRange are marked delivered on a positive receipt
 - [x] BTU SCI pain.001 (SEPA Instant): payment orders per PmtInf, VoP check, status history ACTC → ACSC
 - [x] Verification of Payee: name match against account holders held here, `EBICS_VOP_DEFAULT` for foreign creditors, admin override
-- [x] EDS hold (`EBICS_EDS_HOLD=true`): uploads with `requestEDS` wait in the VEU until release / cancel / reject
+- [x] Held uploads: uploads with `requestEDS` wait in the VEU until release / cancel / reject (originally `EBICS_EDS_HOLD=true`, replaced by signature classes in Phase 9)
 - [x] HAC event ledger (FILE_UPLOAD, ES_VERIFICATION, VEU_FORWARDING, VEU_VERIFICATION_END, VEU_CANCEL_ORDER, ORDER_HAC_FINAL_POS/NEG) for BTU, INI/HIA (+ activation) and PUB/HCA/HCS
 - [x] HAC pain.002.001.03 customer protocol behind `EBICS_HAC_FORMAT=pain.002` (legacy format stays default), DateRange or undelivered events
 - [x] German protocol text with `Sammlerreferenz` on ORDER_HAC_FINAL_POS for credit transfers
@@ -151,7 +151,7 @@
 
 ## Phase 8: VEU, PTK, real-time notifications and payload validation
 
-- [x] VEU orders HVZ, HVD, HVT, HVE, HVS: under EDS hold (`EBICS_EDS_HOLD=true`) a second distinct user must sign (the upload's signature counts as the first), duplicate HVE by the same user → `091306`, HVS cancels; bank-side `/api/veu/orders` and admin UI page "VEU"
+- [x] VEU orders HVZ, HVD, HVT, HVE, HVS: held orders need further signatures (see Phase 9 for the rules), duplicate HVE by the same user → `091306`, HVS cancels; bank-side `/api/veu/orders` and admin UI page "VEU"
 - [x] VoP confirmation (`EBICS_VOP_CONFIRMATION=true`): credit transfers whose VoP group result is not RCVC wait for an HVE signature (the uploader may confirm) or an admin release
 - [x] PTK customer protocol as ISO-8859-1 text rendered from the HAC event ledger, delivered once without DateRange; admin preview `GET /api/ptk/report`
 - [x] Protocol downloads per subscriber (`PATCH /api/subscribers/:partnerId/:userId` `{ protocolDownloadsAllowed }`, toggle on the subscriber page): HAC/PTK → `090003` when off, and HKD/HTD drop them from the user's permissions
@@ -161,9 +161,20 @@
 - [x] Real-time notifications (DK Anlage 2 V1.0): BTD OTH/DE/wssparam, WebSocket `/realtime`, batched EBICS-HAA and INFO messages, one-time tokens with `EBICS_WSS_ONE_TIME_TOKEN=true`; `/api/realtime/*` and admin UI page "Real-time"
 - [x] XSD validation of generated camt.052/053/054.001.08 and pain.002.001.03/.10 payloads against `schemas/ISO20022` (violations logged as server bugs), camt.053 statement Id fits Max35Text
 
+## Phase 9: Signature classes
+
+- [x] Signature class per subscriber (`E`, `A`, `B`, `T`, default `E`): `PATCH /api/subscribers/:partnerId/:userId` / `POST /api/subscribers` `signatureClass` and a select on the subscriber page; replaces `EBICS_EDS_HOLD`
+- [x] Uploads (EBICS 3.0.2 chapter 11.2.3, SignatureFlag documentation in the H005 schema): no SignatureFlag → executed, signature counts as `T`; class authorises alone (`E`) → executed; otherwise `requestEDS` → VEU, without `requestEDS` → `091301` with HAC `DS19`
+- [x] VEU release when the signatures of distinct users authorise the order: one `E`, or two with at least one `E` or `A`; `T` never counts; HVE/HVS by `T` → `090003`
+- [x] HVZ/HVD `SignerInfo/Permission@AuthorisationLevel` = the signer's class, `readyToBeSigned` and `NumSigRequired` follow the rules; HKD/HTD permissions of upload order types carry the user's class, `T` users have no HVE/HVS permission
+- [x] Protocol downloads (HAC, PTK) per subscriber instead of `EBICS_HAC_DENY_PARTNERS`
+
 ### Not yet supported (TODO)
 
 - [ ] HVU (VEU overview without order details)
 - [ ] HVT order details without `completeOrderData="true"` (answered with `091112`)
 - [ ] Cryptographic verification of electronic signatures (uploads, HVE and HVS signatures are parsed only)
 - [ ] Replay of real-time messages for clients that were not connected
+- [ ] Technical subscribers with `SystemID` submitting on behalf of other users
+- [ ] Signature permissions limited to accounts, amounts or BTF, and orders that need two bank-technical signatures (minimum 2)
+- [ ] VEU for direct debits (pain.008 uploads are executed even when signatures are missing and `requestEDS` is set)
