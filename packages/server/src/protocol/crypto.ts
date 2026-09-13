@@ -32,28 +32,32 @@ export function generateTransactionKey(): Buffer {
   return randomBytes(16);
 }
 
+/**
+ * E002 (EBICS 3.0.2 chapter 11.3.2.1): AES-128-CBC with ICV 0 and padding per ANSI X9.23 / ISO 10126-2. There are
+ * always 1 to 16 padding bytes: zeros and a last byte with the padding length, so block-aligned data gets a full block.
+ */
 export function aesEncrypt(data: Buffer, key: Buffer): Buffer {
   const iv = Buffer.alloc(16, 0);
   const cipher = createCipheriv('aes-128-cbc', key, iv);
-  // EBICS (E002): NoPadding with zero fill to the block boundary, matching the
-  // decrypt side. The payload is always deflate-compressed first, so the zlib
-  // stream delimits the real data and the trailing zeros are ignored on inflate.
   cipher.setAutoPadding(false);
-  const padLen = (16 - (data.length % 16)) % 16;
-  const padded = padLen > 0 ? Buffer.concat([data, Buffer.alloc(padLen, 0)]) : data;
-  return Buffer.concat([cipher.update(padded), cipher.final()]);
+  const padLength = 16 - (data.length % 16);
+  const padding = Buffer.alloc(padLength, 0);
+  padding[padLength - 1] = padLength;
+  return Buffer.concat([cipher.update(Buffer.concat([data, padding])), cipher.final()]);
 }
 
+/**
+ * Decrypts E002 data and removes the ANSI X9.23 / ISO 10126-2 padding: the last byte is the padding length, which
+ * also holds for PKCS#7 padding. Data whose last byte is no valid padding length (0 or above 16) is returned
+ * unchanged; order data is deflate-compressed and its stream delimits itself.
+ */
 export function aesDecrypt(data: Buffer, key: Buffer): Buffer {
   const iv = Buffer.alloc(16, 0);
   const decipher = createDecipheriv('aes-128-cbc', key, iv);
-  // EBICS (E002) does not use PKCS#7 padding: the order data is padded to the
-  // block boundary with zero bytes and the cipher runs with NoPadding. Leaving
-  // Node's default PKCS#7 unpadding on rejects the client's last block
-  // ("bad decrypt"). We strip nothing here; the zlib stream that follows
-  // self-delimits, so trailing pad bytes after inflate are harmless.
   decipher.setAutoPadding(false);
-  return Buffer.concat([decipher.update(data), decipher.final()]);
+  const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
+  const padLength = decrypted.length > 0 ? decrypted[decrypted.length - 1]! : 0;
+  return padLength >= 1 && padLength <= 16 ? decrypted.subarray(0, decrypted.length - padLength) : decrypted;
 }
 
 export function rsaWrapKey(transactionKey: Buffer, recipientPublicKeyPem: string): Buffer {

@@ -1,4 +1,4 @@
-import { randomBytes, publicEncrypt, createCipheriv, constants } from 'node:crypto';
+import { randomBytes, publicEncrypt, constants } from 'node:crypto';
 import type { HandlerResult } from './handler-types.js';
 import type { XmlDocument } from '../protocol/xml-parser.js';
 import type { EbicsStore } from '../store/types.js';
@@ -7,7 +7,7 @@ import { xpathString } from '../protocol/xml-parser.js';
 import { buildKeyManagementResponse, buildHpbOrderData } from '../protocol/xml-builder.js';
 import { ReturnCode } from '../protocol/return-codes.js';
 import { verifyAuthSignature, extractPublicKeyFromCertBase64 } from '../protocol/xml-signature.js';
-import { deflate, base64Encode } from '../protocol/crypto.js';
+import { aesEncrypt, deflate, base64Encode } from '../protocol/crypto.js';
 import { allowPreActivation } from '../config/feature-flags.js';
 
 export function handleHpb(
@@ -66,11 +66,9 @@ export function handleHpb(
 
   const compressed = deflate(Buffer.from(orderDataXml, 'utf8'));
 
-  // Encrypt with AES-128-CBC (zero IV per EBICS spec for key management)
+  // E002: AES-128-CBC with ICV 0 and ANSI X9.23 padding, like every other download
   const transactionKey = randomBytes(16);
-  const iv = Buffer.alloc(16, 0);
-  const cipher = createCipheriv('aes-128-cbc', transactionKey, iv);
-  const encrypted = Buffer.concat([cipher.update(compressed), cipher.final()]);
+  const encrypted = aesEncrypt(compressed, transactionKey);
 
   // Wrap transaction key with subscriber's encryption public key
   const encPubKey = extractPublicKeyFromCertBase64(subscriber.keys.encryptionCertificate!);

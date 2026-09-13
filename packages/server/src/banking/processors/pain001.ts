@@ -19,6 +19,8 @@ export interface CreditTransferInstruction {
   pmtInfId: string;
   debtorName?: string;
   debtorIban?: string;
+  /** DbtrAgt/FinInstnId BICFI (or BIC in older versions) */
+  debtorBic?: string;
   requestedExecutionDate?: string;
   /** PmtTpInf/LclInstrm/Cd = INST (SEPA Instant) */
   instant: boolean;
@@ -45,9 +47,10 @@ function lnText(node: Node, path: string): string | undefined {
 /**
  * Parses every PmtInf of a pain.001 document. Version-tolerant: elements are matched by local
  * name, so pain.001.001.03 / .09 and other versions work without hard-coding a namespace.
- * Transactions without a positive amount are skipped.
+ * Transactions without a positive amount are skipped unless `includeNonPositiveAmounts` is set (HVT lists every
+ * single order of the original file); transactions without a readable amount are always skipped.
  */
-export function parsePain001(doc: XmlDocument): CreditTransferInstruction[] {
+export function parsePain001(doc: XmlDocument, options: { includeNonPositiveAmounts?: boolean } = {}): CreditTransferInstruction[] {
   const msgId = select(doc, "//*[local-name()='GrpHdr']/*[local-name()='MsgId']")[0]?.textContent?.trim() ?? '';
 
   return select(doc, "//*[local-name()='PmtInf']").map((pmtInf) => {
@@ -55,7 +58,7 @@ export function parsePain001(doc: XmlDocument): CreditTransferInstruction[] {
     for (const txInf of select(pmtInf, "./*[local-name()='CdtTrfTxInf']")) {
       const amountNode = select(txInf, "./*[local-name()='Amt']/*[local-name()='InstdAmt']")[0] as Element | undefined;
       const amountCents = Math.round(parseFloat(amountNode?.textContent ?? '') * 100);
-      if (isNaN(amountCents) || amountCents <= 0) continue;
+      if (isNaN(amountCents) || (amountCents <= 0 && !options.includeNonPositiveAmounts)) continue;
       transactions.push({
         endToEndId: lnText(txInf, 'PmtId/EndToEndId'),
         creditorName: lnText(txInf, 'Cdtr/Nm'),
@@ -72,6 +75,7 @@ export function parsePain001(doc: XmlDocument): CreditTransferInstruction[] {
       pmtInfId: lnText(pmtInf, 'PmtInfId') ?? '',
       debtorName: lnText(pmtInf, 'Dbtr/Nm'),
       debtorIban: lnText(pmtInf, 'DbtrAcct/Id/IBAN'),
+      debtorBic: lnText(pmtInf, 'DbtrAgt/FinInstnId/BICFI') ?? lnText(pmtInf, 'DbtrAgt/FinInstnId/BIC'),
       requestedExecutionDate:
         lnText(pmtInf, 'ReqdExctnDt/DtTm') ?? lnText(pmtInf, 'ReqdExctnDt/Dt') ?? lnText(pmtInf, 'ReqdExctnDt'),
       instant: lnText(pmtInf, 'PmtTpInf/LclInstrm/Cd') === 'INST',

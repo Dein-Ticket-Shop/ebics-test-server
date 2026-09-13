@@ -32,6 +32,7 @@ export const SUPPORTED_ORDER_TYPES: OrderTypeInfo[] = [
   { adminType: 'HAC', description: 'Download customer acknowledgement' },
   { adminType: 'PTK', description: 'Download customer protocol (text)' },
   // Distributed electronic signature (VEU)
+  { adminType: 'HVU', description: 'VEU overview' },
   { adminType: 'HVZ', description: 'VEU overview with order details' },
   { adminType: 'HVD', description: 'VEU state of an order' },
   { adminType: 'HVT', description: 'VEU transaction details' },

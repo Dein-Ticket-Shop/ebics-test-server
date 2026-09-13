@@ -100,9 +100,10 @@ export function handleBtu(
     if (err instanceof OrderAuthError) {
       return ReturnCode.EBICS_ACCOUNT_AUTHORISATION_FAILED;
     }
-    // Signature flag set, but the uploader's signature class does not authorise the order and no VEU was requested.
+    // Signature flag set, but the uploader's signature class does not authorise the order and no VEU was requested:
+    // "Authorization failed" (EBICS 3.0.2 chapter 3.14), EBICS_AUTHORISATION_ORDER_IDENTIFIER_FAILED in H005
     if (err instanceof SignatureAuthorisationError) {
-      return ReturnCode.EBICS_SIGNATURE_VERIFICATION_FAILED;
+      return ReturnCode.EBICS_AUTHORISATION_ORDER_TYPE_FAILED;
     }
   }
 

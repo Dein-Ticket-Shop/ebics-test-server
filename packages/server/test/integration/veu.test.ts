@@ -4,9 +4,11 @@ import {
   buildPain001Document,
   hvdOrderParams,
   hvtOrderParams,
+  hvuOrderParams,
   hvzOrderParams,
   readBusinessReturnCode,
   type VeuOrderRef,
+  type VeuServiceFilter,
 } from '../helpers/test-client.js';
 import {
   downloadWithOrderParams,
@@ -191,7 +193,7 @@ describe('VEU (distributed electronic signature)', () => {
 
       expect(localTexts(xml, 'OrderDetails/TotalOrders')).toEqual(['2']);
       expect(localTexts(xml, 'OrderDetails/TotalAmount')).toEqual(['24.68']);
-      expect(localAttribute(xml, 'TotalAmount', 'isCredit')).toBe('false');
+      expect(localAttribute(xml, 'TotalAmount', 'isCredit')).toBe('true');
       expect(localTexts(xml, 'OrderDetails/Currency')).toEqual(['EUR']);
       expect(localTexts(xml, 'FirstOrderInfo/OrderPartyInfo')).toEqual(['Bob Mustermann']);
       expect(localTexts(xml, 'FirstOrderInfo/AccountInfo/AccountNumber')).toEqual([ctx.creditor.iban]);
@@ -238,7 +240,7 @@ describe('VEU (distributed electronic signature)', () => {
       expect((await hvz(third)).code).toBe('090005');
     });
 
-    it('class T uploader: the transport signature is not listed, NumSigDone starts at 0 and the T user is not ready to sign', async () => {
+    it('class T uploader: the transport signature is not listed, NumSigDone starts at 0 and the T user sees no orders', async () => {
       await setSignatureClass(ctx, USER_ID, 'T');
       const { content, orderId, ref } = await uploadTransfer(ctx, 'HVZ-T');
       expect(orderStatuses(orderId)).toEqual(['PENDING_EDS']);
@@ -246,15 +248,16 @@ describe('VEU (distributed electronic signature)', () => {
       const forwarding = ctx.store.listHacEvents({ partnerId: PARTNER_ID, orderId }).find((e) => e.action === 'VEU_FORWARDING')!;
       expect(forwarding.additionalInfo).toEqual(['Unterschriftsklasse T: weitere Unterschrift erforderlich']);
 
-      const own = await hvzXml(ctx.uploader);
-      expect(localTexts(own, 'OrderDetails/OrderID')).toEqual([orderId]);
-      expect(localAttribute(own, 'SigningInfo', 'readyToBeSigned')).toBe('false');
-      expect(localAttribute(own, 'SigningInfo', 'NumSigDone')).toBe('0');
-      expect(localAttribute(own, 'SigningInfo', 'NumSigRequired')).toBe('1');
-      expect(localTexts(own, 'OrderDetails/SignerInfo')).toEqual([]);
-      expect(localTexts(own, 'OrderDetails/OriginatorInfo/UserID')).toEqual([USER_ID]);
+      // HVZ lists only orders the subscriber may sign (EBICS 3.0.2 chapter 8.3.1): none for class T
+      expect((await hvz(ctx.uploader)).code).toBe('090005');
 
-      expect(localAttribute(await hvzXml(ctx.signer), 'SigningInfo', 'readyToBeSigned')).toBe('true');
+      const xml = await hvzXml(ctx.signer);
+      expect(localTexts(xml, 'OrderDetails/OrderID')).toEqual([orderId]);
+      expect(localAttribute(xml, 'SigningInfo', 'readyToBeSigned')).toBe('true');
+      expect(localAttribute(xml, 'SigningInfo', 'NumSigDone')).toBe('0');
+      expect(localAttribute(xml, 'SigningInfo', 'NumSigRequired')).toBe('1');
+      expect(localTexts(xml, 'OrderDetails/SignerInfo')).toEqual([]);
+      expect(localTexts(xml, 'OrderDetails/OriginatorInfo/UserID')).toEqual([USER_ID]);
 
       const details = await downloadWithOrderParams(ctx.signer, 'HVD', hvdOrderParams(ref));
       expect(details.code).toBe('000000');
@@ -266,6 +269,80 @@ describe('VEU (distributed electronic signature)', () => {
       expect(released.code).toBe('000000');
       expect(orderStatuses(orderId)).toEqual(['EXECUTED']);
       expect(signatures(orderId)).toEqual([[USER_ID, 'UPLOAD', 'T'], [SECOND_USER, 'HVE', 'E']]);
+    });
+  });
+
+  describe('HVU', () => {
+    const hvu = (session: EbicsSession, filters: VeuServiceFilter[] = []) => downloadWithOrderParams(session, 'HVU', hvuOrderParams(filters));
+    const hvuXml = async (session: EbicsSession) => {
+      const result = await hvu(session);
+      expect(result.code).toBe('000000');
+      const xml = result.data!.toString('utf8');
+      expect(() => validateXml(xml, 'response')).not.toThrow();
+      return xml;
+    };
+
+    it('answers 090005 when no order waits for signatures', async () => {
+      expect((await hvu(ctx.signer)).code).toBe('090005');
+    });
+
+    it('lists service, OrderID, order data size, signing state, signers and originator without the HVZ details', async () => {
+      const { content, orderId } = await uploadTransfer(ctx, 'HVU', { pmtInfs: 2 });
+      const xml = await hvuXml(ctx.signer);
+
+      expect(localTexts(xml, 'HVUResponseOrderData/OrderDetails')).toHaveLength(1);
+      expect(localTexts(xml, 'OrderDetails/OrderID')).toEqual([orderId]);
+      expect(localTexts(xml, 'OrderDetails/Service/ServiceName')).toEqual(['SCI']);
+      expect(localTexts(xml, 'OrderDetails/Service/Scope')).toEqual(['DE']);
+      expect(localTexts(xml, 'OrderDetails/Service/ServiceOption')).toEqual(['VOI']);
+      expect(localTexts(xml, 'OrderDetails/Service/MsgName')).toEqual(['pain.001']);
+      expect(localTexts(xml, 'OrderDetails/OrderDataSize')).toEqual([String(Buffer.byteLength(content))]);
+      expect(localAttribute(xml, 'SigningInfo', 'readyToBeSigned')).toBe('true');
+      expect(localAttribute(xml, 'SigningInfo', 'NumSigRequired')).toBe('2');
+      expect(localAttribute(xml, 'SigningInfo', 'NumSigDone')).toBe('1');
+      expect(localTexts(xml, 'OrderDetails/SignerInfo/UserID')).toEqual([USER_ID]);
+      expect(localAttributes(xml, 'Permission', 'AuthorisationLevel')).toEqual(['A']);
+      expect(localTexts(xml, 'OrderDetails/OriginatorInfo/PartnerID')).toEqual([PARTNER_ID]);
+      expect(localTexts(xml, 'OrderDetails/OriginatorInfo/UserID')).toEqual([USER_ID]);
+      for (const hvzOnly of ['DataDigest', 'OrderDataAvailable', 'OrderDetailsAvailable', 'TotalOrders', 'TotalAmount', 'Currency', 'FirstOrderInfo']) {
+        expect(localTexts(xml, `OrderDetails/${hvzOnly}`), hvzOnly).toEqual([]);
+      }
+
+      // readyToBeSigned is false for the uploader, who already signed
+      expect(localAttribute(await hvuXml(ctx.uploader), 'SigningInfo', 'readyToBeSigned')).toBe('false');
+    });
+
+    it('lists no orders for a class T subscriber (EBICS 3.0.2 chapter 8.3.1)', async () => {
+      await uploadTransfer(ctx, 'HVU-T');
+      await setSignatureClass(ctx, SECOND_USER, 'T');
+      expect((await hvu(ctx.signer)).code).toBe('090005');
+      expect((await hvz(ctx.signer)).code).toBe('090005');
+      await setSignatureClass(ctx, SECOND_USER, 'B');
+      expect((await hvu(ctx.signer)).code).toBe('000000');
+    });
+
+    // Chapter 8.3.6: all elements of the HVU/HVZ ServiceFilter are optional, the filter selects orders with the given values
+    it.each(['HVU', 'HVZ'] as const)('%s ServiceFilter lists orders matching one of the filters in every given element', async (orderType) => {
+      const { orderId } = await uploadTransfer(ctx, `FILTER-${orderType}`);
+      const listed = async (filters: VeuServiceFilter[]) => {
+        const params = orderType === 'HVU' ? hvuOrderParams(filters) : hvzOrderParams(filters);
+        const result = await downloadWithOrderParams(ctx.signer, orderType, params);
+        if (result.code === '090005') return [];
+        expect(result.code).toBe('000000');
+        const xml = result.data!.toString('utf8');
+        expect(() => validateXml(xml, 'response')).not.toThrow();
+        return localTexts(xml, 'OrderDetails/OrderID');
+      };
+
+      expect(await listed([{ serviceName: 'SCI' }])).toEqual([orderId]);
+      expect(await listed([{ msgName: 'pain.001' }])).toEqual([orderId]);
+      expect(await listed([{ serviceName: 'SCI', scope: 'DE', serviceOption: 'VOI', msgName: 'pain.001' }])).toEqual([orderId]);
+      expect(await listed([{ serviceName: 'SDD' }])).toEqual([]);
+      expect(await listed([{ serviceName: 'SCI', serviceOption: 'SDN' }])).toEqual([]);
+      expect(await listed([{ serviceName: 'SCI', scope: 'CH' }])).toEqual([]);
+      // Orders in the VEU carry no container
+      expect(await listed([{ serviceName: 'SCI', containerType: 'ZIP' }])).toEqual([]);
+      expect(await listed([{ serviceName: 'SDD' }, { msgName: 'pain.001' }])).toEqual([orderId]);
     });
   });
 
@@ -299,10 +376,82 @@ describe('VEU (distributed electronic signature)', () => {
       expect(result.data!.toString('utf8')).toBe(content);
     });
 
-    it('answers 091112 without completeOrderData', async () => {
-      const { ref } = await uploadTransfer(ctx, 'HVT-DETAILS');
-      const result = await downloadWithOrderParams(ctx.signer, 'HVT', hvtOrderParams(ref, { completeOrderData: false }));
-      expect(result.code).toBe('091112');
+    describe('completeOrderData="false" (EBICS 3.0.2 chapter 8.3.3)', () => {
+      async function uploadDetails(): Promise<VeuOrderRef> {
+        const party = { debtorName: 'Musterfirma GmbH', debtorIban: ctx.debtor.iban };
+        const creditor = { creditorName: 'Bob Mustermann', creditorIban: ctx.creditor.iban };
+        const content = buildPain001Document({
+          msgId: 'MSG-HVT-DETAILS',
+          payments: [
+            {
+              pmtInfId: 'PMT-D-1',
+              ...party,
+              transactions: [
+                { endToEndId: 'E2E-D-1', ...creditor, amount: '10.00', remittance: 'Auszahlung 1' },
+                { endToEndId: 'E2E-D-2', ...creditor, amount: '20.50' },
+              ],
+            },
+            { pmtInfId: 'PMT-D-2', ...party, transactions: [{ endToEndId: 'E2E-D-3', ...creditor, amount: '3.33', remittance: 'Auszahlung 3' }] },
+          ],
+        });
+        const upload = await uploadOrder(ctx.uploader, content, { upload: { scope: 'DE', serviceOption: 'VOI', requestEds: true } });
+        expect(readBusinessReturnCode(upload.transferBody)).toBe('000000');
+        return { partnerId: PARTNER_ID, orderId: upload.orderId!, serviceName: 'SCI', scope: 'DE', serviceOption: 'VOI', msgName: 'pain.001' };
+      }
+
+      const details = (ref: VeuOrderRef, fetchLimit: number, fetchOffset: number) =>
+        downloadWithOrderParams(ctx.signer, 'HVT', hvtOrderParams(ref, { completeOrderData: false, fetchLimit, fetchOffset }));
+
+      it('returns every single order as OrderInfo with NumOrderInfos, accounts, execution date, amount and purpose', async () => {
+        const ref = await uploadDetails();
+        const result = await details(ref, 0, 0);
+        expect(result.code).toBe('000000');
+        const xml = result.data!.toString('utf8');
+        expect(() => validateXml(xml, 'response')).not.toThrow();
+
+        expect(localTexts(xml, 'HVTResponseOrderData/NumOrderInfos')).toEqual(['3']);
+        expect(localTexts(xml, 'OrderInfo/MsgName')).toEqual(['pain.001', 'pain.001', 'pain.001']);
+        expect(localTexts(xml, 'OrderInfo/Amount')).toEqual(['10.00', '20.50', '3.33']);
+        expect(localAttributes(xml, 'Amount', 'isCredit')).toEqual(['true', 'true', 'true']);
+        expect(localAttributes(xml, 'Amount', 'Currency')).toEqual(['EUR', 'EUR', 'EUR']);
+        const today = new Date().toISOString().slice(0, 10);
+        expect(localTexts(xml, 'OrderInfo/ExecutionDate')).toEqual([today, today, today]);
+        expect(localTexts(xml, 'OrderInfo/Description')).toEqual(['Auszahlung 1', 'Auszahlung 3']);
+        expect(localAttributes(xml, 'Description', 'Type')).toEqual(['Purpose', 'Purpose']);
+
+        const parties = [ctx.debtor.iban, ctx.creditor.iban];
+        expect(localTexts(xml, 'AccountInfo/AccountNumber')).toEqual([...parties, ...parties, ...parties]);
+        expect(localAttributes(xml, 'AccountNumber', 'Role')).toEqual(Array(3).fill(['Originator', 'Recipient']).flat());
+        expect(localAttributes(xml, 'AccountNumber', 'international')).toEqual(Array(6).fill('true'));
+        // The file names the debtor agent's BIC only
+        expect(localTexts(xml, 'AccountInfo/BankCode')).toEqual(['ETBADE2AXXX', 'ETBADE2AXXX', 'ETBADE2AXXX']);
+        expect(localAttributes(xml, 'BankCode', 'Role')).toEqual(['Originator', 'Originator', 'Originator']);
+        expect(localTexts(xml, 'AccountInfo/AccountHolder')).toEqual(Array(3).fill(['Musterfirma GmbH', 'Bob Mustermann']).flat());
+      });
+
+      it('pages with fetchLimit and fetchOffset and answers 091112 for an offset beyond the single orders', async () => {
+        const ref = await uploadDetails();
+        const amounts = async (fetchLimit: number, fetchOffset: number) => {
+          const result = await details(ref, fetchLimit, fetchOffset);
+          expect(result.code).toBe('000000');
+          const xml = result.data!.toString('utf8');
+          expect(localTexts(xml, 'NumOrderInfos')).toEqual(['3']);
+          return localTexts(xml, 'OrderInfo/Amount');
+        };
+        expect(await amounts(1, 0)).toEqual(['10.00']);
+        expect(await amounts(1, 1)).toEqual(['20.50']);
+        expect(await amounts(2, 1)).toEqual(['20.50', '3.33']);
+        expect(await amounts(100, 2)).toEqual(['3.33']);
+        expect(await amounts(0, 1)).toEqual(['20.50', '3.33']);
+        expect((await details(ref, 0, 3)).code).toBe('091112');
+        expect((await details(ref, 10, 4)).code).toBe('091112');
+      });
+
+      it('answers 091007 for a class T subscriber', async () => {
+        const ref = await uploadDetails();
+        await setSignatureClass(ctx, SECOND_USER, 'T');
+        expect((await details(ref, 0, 0)).code).toBe('091007');
+      });
     });
   });
 
@@ -359,9 +508,8 @@ describe('VEU (distributed electronic signature)', () => {
       await setSignatureClass(ctx, SECOND_USER, 'T');
       const { content, orderId, ref } = await uploadTransfer(ctx, 'HVE-T');
 
-      const overview = await hvzXml(ctx.signer);
-      expect(localTexts(overview, 'OrderDetails/OrderID')).toEqual([orderId]);
-      expect(localAttribute(overview, 'SigningInfo', 'readyToBeSigned')).toBe('false');
+      // A class T user is not authorised to sign, so HVZ lists nothing for it (chapter 8.3.1)
+      expect((await hvz(ctx.signer)).code).toBe('090005');
 
       const result = await sendVeuSignature(ctx.signer, 'HVE', ref, { dataDigest: orderDataDigest(content) });
       expect(result.technicalCode).toBe('000000');
@@ -429,6 +577,15 @@ describe('VEU (distributed electronic signature)', () => {
       }
     });
 
+    it('HVD and HVT by a class T subscriber: 091007 EBICS_DISTRIBUTED_SIGNATURE_AUTHORISATION_FAILED (chapters 8.3.2, 8.3.3)', async () => {
+      const { ref } = await uploadTransfer(ctx, 'ERR-T');
+      await setSignatureClass(ctx, SECOND_USER, 'T');
+      expect((await downloadWithOrderParams(ctx.signer, 'HVD', hvdOrderParams(ref))).code).toBe('091007');
+      expect((await downloadWithOrderParams(ctx.signer, 'HVT', hvtOrderParams(ref, { completeOrderData: true }))).code).toBe('091007');
+      // The order must be waiting in the VEU first (091114)
+      expect((await downloadWithOrderParams(ctx.signer, 'HVD', hvdOrderParams({ ...ref, orderId: UNKNOWN_ORDER_ID }))).code).toBe('091114');
+    });
+
     it('HVE and HVS: 091114, 091120, 091304 for foreign signature data and 091111 for undecodable signature data', async () => {
       const { orderId, ref } = await uploadTransfer(ctx, 'ERR-SIG');
       for (const orderType of ['HVE', 'HVS'] as const) {
@@ -458,7 +615,7 @@ describe('VEU (distributed electronic signature)', () => {
       expect((await api(ctx, '/veu/orders')).json).toEqual([]);
     });
 
-    it('executes an upload with SignatureFlag but without requestEDS; the same upload of a class A, B or T user is rejected with 091301', async () => {
+    it('executes an upload with SignatureFlag but without requestEDS; the same upload of a class A, B or T user is rejected with 090003', async () => {
       const upload = (id: string) =>
         uploadOrder(ctx.uploader, pain001(ctx, id), { upload: { scope: 'DE', serviceOption: 'VOI', signatureFlag: true, requestEds: false } });
 
@@ -471,7 +628,7 @@ describe('VEU (distributed electronic signature)', () => {
       for (const signatureClass of ['A', 'B', 'T'] as const) {
         await setSignatureClass(ctx, USER_ID, signatureClass);
         const rejected = await upload(`FLAG-${signatureClass}`);
-        expect(readBusinessReturnCode(rejected.transferBody), signatureClass).toBe('091301');
+        expect(readBusinessReturnCode(rejected.transferBody), signatureClass).toBe('090003');
         expect(orderStatuses(rejected.orderId!), signatureClass).toEqual([]);
         expect(signatures(rejected.orderId!), signatureClass).toEqual([]);
         const verification = ctx.store.listHacEvents({ partnerId: PARTNER_ID, orderId: rejected.orderId! }).find((e) => e.action === 'ES_VERIFICATION');

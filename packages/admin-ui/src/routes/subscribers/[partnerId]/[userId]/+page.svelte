@@ -62,19 +62,19 @@
       value: 'A',
       label: 'first signature',
       description:
-        'Needs a further signature of another user with class E, A or B. Uploads requesting EDS wait in the VEU, other uploads with a signature flag are rejected with 091301.',
+        'Needs a further signature of another user with class E, A or B. Uploads requesting EDS wait in the VEU, other uploads with a signature flag are rejected with 090003.',
     },
     {
       value: 'B',
       label: 'second signature',
       description:
-        'Needs a further signature of another user with class E or A. Uploads requesting EDS wait in the VEU, other uploads with a signature flag are rejected with 091301.',
+        'Needs a further signature of another user with class E or A. Uploads requesting EDS wait in the VEU, other uploads with a signature flag are rejected with 090003.',
     },
     {
       value: 'T',
       label: 'transport signature (technical user)',
       description:
-        'Submits orders without authorising them. Uploads requesting EDS wait in the VEU for other users, other uploads with a signature flag are rejected with 091301. Cannot sign (HVE) or cancel (HVS) orders.',
+        'Submits orders without authorising them. Uploads requesting EDS wait in the VEU for other users, other uploads with a signature flag are rejected with 090003. Cannot sign (HVE) or cancel (HVS) orders; HVU and HVZ list no orders and HVD/HVT answer 091007.',
     },
   ];
   const signatureClassOption = $derived(

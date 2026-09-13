@@ -15,8 +15,8 @@ inspect every request and response.
 - Generic upload and download: BTU and BTD with BTF service parameters
 - Payment processing: parses pain.001 credit transfers and pain.008 direct debits
 - SEPA Instant uploads (BTU SCI pain.001) as payment orders with Verification of Payee and a payment status history
-- Signature classes per subscriber (E, A, B, T): uploads by a user whose class does not authorise the order alone wait in the VEU when they request a distributed signature (otherwise `091301`), until users with class E, A or B sign or an admin releases, cancels or rejects them. Class T is a technical user that can only submit orders
-- VEU order types HVZ, HVD, HVT, HVE and HVS to list, inspect, sign and cancel held orders (signatures are parsed, not cryptographically verified)
+- Signature classes per subscriber (E, A, B, T): uploads by a user whose class does not authorise the order alone wait in the VEU when they request a distributed signature (otherwise `090003`), until users with class E, A or B sign or an admin releases, cancels or rejects them. Class T is a technical user that can only submit orders
+- VEU order types HVU, HVZ (both with ServiceFilter), HVD, HVT (complete order data or single order details with fetchLimit/fetchOffset), HVE and HVS to list, inspect, sign and cancel held orders (signatures are parsed, not cryptographically verified)
 - Optional VoP confirmation: credit transfers without a full payee match (RCVC) wait for an HVE signature or an admin release
 - EBICS OrderIDs on uploads and INI/HIA, echoed in every response of the transaction
 - Statement generation: camt.053 and MT940
@@ -71,11 +71,14 @@ so their uploads execute immediately. Signature classes follow EBICS 3.0.2 chapt
 | Class | Meaning | Upload with `requestEDS` | Upload with SignatureFlag, no `requestEDS` | HVE/HVS |
 | ----- | ------- | ------------------------ | ------------------------------------------ | ------- |
 | `E`   | single signature | executed | executed | allowed |
-| `A`   | first signature | waits in the VEU for another E, A or B signature | `091301` | allowed |
-| `B`   | second signature | waits in the VEU for another E or A signature | `091301` | allowed |
-| `T`   | transport signature (technical user) | waits in the VEU for signatures of other users | `091301` | `090003` |
+| `A`   | first signature | waits in the VEU for another E, A or B signature | `090003` | allowed |
+| `B`   | second signature | waits in the VEU for another E or A signature | `090003` | allowed |
+| `T`   | transport signature (technical user) | waits in the VEU for signatures of other users | `090003` | `090003` |
 
-Uploads without SignatureFlag are authorised outside EBICS and executed; their signature counts as `T`.
+Uploads without SignatureFlag are authorised outside EBICS and executed; their signature counts as `T`. The test
+server assumes every customer has agreed to the VEU and to authorisation outside EBICS; without such agreements a
+bank answers `091007` or `090003` (EBICS 3.0.2 chapter 3.14). HVU and HVZ list only the orders the requesting user
+may sign, so class `T` users get `090005`, and HVD/HVT answer `091007` for them (chapters 8.3.1 to 8.3.3).
 Next to subscribers and banking data, the UI has pages for payment orders, the customer protocol, the
 VEU (sign or cancel held orders as a chosen user), Real-time (open connections, tokens, test messages)
 and Download Data (seed files per service, message name and ServiceOption). Host Config lists every

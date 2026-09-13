@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { generateKeyPairSync } from 'node:crypto';
 import { deflate, inflate, base64Encode, base64Decode, sha256Digest, extractCertificateFromPem, generateTransactionKey, aesEncrypt, aesDecrypt, rsaWrapKey, rsaUnwrapKey, generateTransactionId } from '../../src/protocol/crypto.js';
+import { createCipheriv, createDecipheriv } from 'node:crypto';
 
 describe('crypto', () => {
   describe('deflate / inflate', () => {
@@ -100,15 +101,40 @@ describe('crypto', () => {
   });
 
   describe('aesEncrypt / aesDecrypt', () => {
-    it('should round-trip data correctly (EBICS NoPadding, zero-filled)', () => {
+    it('should round-trip data correctly (E002, ANSI X9.23 padding removed)', () => {
       const key = generateTransactionKey();
       const data = Buffer.from('EBICS order data payload');
       const encrypted = aesEncrypt(data, key);
       const decrypted = aesDecrypt(encrypted, key);
-      // E002 uses NoPadding + zero fill: the original bytes are the prefix of a
-      // block-aligned buffer (any trailing zeros are stripped later by inflate).
-      expect(decrypted.length % 16).toBe(0);
-      expect(decrypted.subarray(0, data.length)).toEqual(data);
+      expect(decrypted).toEqual(data);
+    });
+
+    it('pads with zeros and a last byte holding the padding length (ANSI X9.23), a full block for aligned data', () => {
+      const key = generateTransactionKey();
+      const decryptRaw = (encrypted: Buffer) => {
+        const decipher = createDecipheriv('aes-128-cbc', key, Buffer.alloc(16, 0));
+        decipher.setAutoPadding(false);
+        return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+      };
+      expect(decryptRaw(aesEncrypt(Buffer.from('short'), key))).toEqual(
+        Buffer.concat([Buffer.from('short'), Buffer.alloc(10, 0), Buffer.from([11])]),
+      );
+      expect(decryptRaw(aesEncrypt(Buffer.alloc(16, 0x41), key))).toEqual(
+        Buffer.concat([Buffer.alloc(16, 0x41), Buffer.alloc(15, 0), Buffer.from([16])]),
+      );
+    });
+
+    it('removes PKCS#7 padding of clients as well and keeps data without a valid padding length', () => {
+      const key = generateTransactionKey();
+      const encryptRaw = (plain: Buffer, autoPadding: boolean) => {
+        const cipher = createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0));
+        cipher.setAutoPadding(autoPadding);
+        return Buffer.concat([cipher.update(plain), cipher.final()]);
+      };
+      expect(aesDecrypt(encryptRaw(Buffer.from('pkcs7 padded'), true), key)).toEqual(Buffer.from('pkcs7 padded'));
+      const zeroFilled = Buffer.concat([Buffer.from('zero filled'), Buffer.alloc(5, 0)]);
+      expect(aesDecrypt(encryptRaw(zeroFilled, false), key)).toEqual(zeroFilled);
+      expect(aesDecrypt(Buffer.alloc(0), key)).toEqual(Buffer.alloc(0));
     });
 
     it('should produce different ciphertext than plaintext', () => {
@@ -146,8 +172,8 @@ describe('crypto', () => {
       const key2 = generateTransactionKey();
       const data = Buffer.from('secret');
       const encrypted = aesEncrypt(data, key1);
-      // NoPadding has no integrity check, so a wrong key yields garbage rather
-      // than throwing; the corruption surfaces later when inflate fails.
+      // CBC without authentication: a wrong key yields garbage rather than
+      // throwing; the corruption surfaces later when inflate fails.
       const decrypted = aesDecrypt(encrypted, key2);
       expect(decrypted.subarray(0, data.length)).not.toEqual(data);
     });

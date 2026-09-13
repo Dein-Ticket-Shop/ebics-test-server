@@ -317,9 +317,10 @@ export function decryptDownloadResponse(responseXml: string, encPrivateKeyPem: s
 
   const iv = Buffer.alloc(16, 0);
   const decipher = createDecipheriv('aes-128-cbc', transactionKey, iv);
-  decipher.setAutoPadding(false); // EBICS E002: zero-padded, no PKCS#7
+  decipher.setAutoPadding(false); // EBICS E002: ANSI X9.23 padding, the last byte is its length
   const encrypted = Buffer.from(orderDataB64, 'base64');
-  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  const padded = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  const decrypted = padded.subarray(0, padded.length - padded[padded.length - 1]!);
   const orderData = inflateSync(decrypted).toString('utf8');
 
   return { orderData, transactionId, numSegments };
@@ -480,7 +481,9 @@ export function decryptDownloadResponseBytes(
   );
   const decipher = createDecipheriv('aes-128-cbc', transactionKey, Buffer.alloc(16, 0));
   decipher.setAutoPadding(false);
-  const decrypted = Buffer.concat([decipher.update(Buffer.from(orderDataB64, 'base64')), decipher.final()]);
+  const padded = Buffer.concat([decipher.update(Buffer.from(orderDataB64, 'base64')), decipher.final()]);
+  // E002: ANSI X9.23 padding, the last byte is its length
+  const decrypted = padded.subarray(0, padded.length - padded[padded.length - 1]!);
 
   return {
     data: inflateSync(decrypted),
@@ -574,9 +577,37 @@ function hvRequestStructure(ref: VeuOrderRef): string {
   return `<PartnerID>${ref.partnerId}</PartnerID><Service><ServiceName>${ref.serviceName}</ServiceName>${scope}${option}<MsgName>${ref.msgName}</MsgName></Service><OrderID>${ref.orderId}</OrderID>`;
 }
 
-/** HVZOrderParams without service filter: every order waiting for signatures */
-export function hvzOrderParams(): string {
-  return '<HVZOrderParams xmlns="urn:org:ebics:H005"/>';
+/** ServiceFilter of HVUOrderParams/HVZOrderParams (ServiceType: every element optional) */
+export interface VeuServiceFilter {
+  serviceName?: string;
+  scope?: string;
+  serviceOption?: string;
+  containerType?: string;
+  msgName?: string;
+}
+
+function serviceFilterXml(filters: VeuServiceFilter[]): string {
+  return filters
+    .map((f) => {
+      const element = (name: string, value?: string) => (value ? `<${name}>${value}</${name}>` : '');
+      const container = f.containerType ? `<Container containerType="${f.containerType}"/>` : '';
+      return `<ServiceFilter>${element('ServiceName', f.serviceName)}${element('Scope', f.scope)}${element('ServiceOption', f.serviceOption)}${container}${element('MsgName', f.msgName)}</ServiceFilter>`;
+    })
+    .join('');
+}
+
+/** HVZOrderParams; without service filter every order waiting for signatures */
+export function hvzOrderParams(filters: VeuServiceFilter[] = []): string {
+  return filters.length === 0
+    ? '<HVZOrderParams xmlns="urn:org:ebics:H005"/>'
+    : `<HVZOrderParams xmlns="urn:org:ebics:H005">${serviceFilterXml(filters)}</HVZOrderParams>`;
+}
+
+/** HVUOrderParams; without service filter every order waiting for signatures */
+export function hvuOrderParams(filters: VeuServiceFilter[] = []): string {
+  return filters.length === 0
+    ? '<HVUOrderParams xmlns="urn:org:ebics:H005"/>'
+    : `<HVUOrderParams xmlns="urn:org:ebics:H005">${serviceFilterXml(filters)}</HVUOrderParams>`;
 }
 
 export function hvdOrderParams(ref: VeuOrderRef): string {

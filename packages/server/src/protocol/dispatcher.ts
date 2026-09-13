@@ -29,7 +29,7 @@ import { validatePayload } from './xml-validator.js';
 import type { DownloadOrderData, DownloadPayload } from '../handlers/handler-types.js';
 import { OrderRejection } from '../handlers/handler-types.js';
 import { recordEvent, recordUploadCompleted, recordUploadRejected } from '../banking/order-events.js';
-import { handleHvd, handleHvt, handleHvz, processVeuSignature } from '../handlers/veu.js';
+import { handleHvd, handleHvt, handleHvu, handleHvz, processVeuSignature } from '../handlers/veu.js';
 import { handlePtk } from '../handlers/ptk.js';
 import { hacDownloadEvents } from '../config/feature-flags.js';
 import { PROTOCOL_ORDER_TYPES } from '../handlers/partner-info.js';
@@ -243,6 +243,7 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     HAA: handleHaa,
     HAC: handleHac,
     PTK: handlePtk,
+    HVU: handleHvu,
     HVZ: handleHvz,
     HVD: handleHvd,
     HVT: handleHvt,

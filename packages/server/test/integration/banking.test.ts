@@ -38,6 +38,7 @@ async function setupReadySubscriber(
   );
   const iv = Buffer.alloc(16, 0);
   const decipher = createDecipheriv('aes-128-cbc', txKey, iv);
+  decipher.setAutoPadding(false); // E002 uses ANSI X9.23 padding, not PKCS#7
   Buffer.concat([decipher.update(Buffer.from(orderDataB64, 'base64')), decipher.final()]);
   const hostConfig = store.getHostConfig()!;
   return {

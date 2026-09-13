@@ -264,10 +264,10 @@ describe('Signature classes (EBICS)', () => {
       expect(signatures(orderId)).toEqual([[USER_ID, 'UPLOAD', 'E']]);
     });
 
-    it.each(NOT_AUTHORISING)('rejects an upload by class %s with 091301 and DS19 in the customer protocol', async (signatureClass) => {
+    it.each(NOT_AUTHORISING)('rejects an upload by class %s with 090003 and DS19 in the customer protocol', async (signatureClass) => {
       setClass(signatureClass);
       const { orderId, code } = await upload(ctx.session, creditTransfer(`REJECT-${signatureClass}`), SCI, 'signatureFlag');
-      expect(code).toBe('091301');
+      expect(code).toBe('090003');
       expect(ctx.store.listPaymentOrders()).toEqual([]);
       expect(balances()).toEqual(UNCHANGED_BALANCES);
       expect(signatures(orderId)).toEqual([]);
@@ -283,10 +283,10 @@ describe('Signature classes (EBICS)', () => {
       expect(events[2]!.additionalInfo).toContain(message);
     });
 
-    it('rejects a pain.008 by class B with 091301 as well, without booking', async () => {
+    it('rejects a pain.008 by class B with 090003 as well, without booking', async () => {
       setClass('B');
       const { orderId, code } = await upload(ctx.session, directDebit('SDD-B'), SDD, 'signatureFlag');
-      expect(code).toBe('091301');
+      expect(code).toBe('090003');
       expect(balances()).toEqual(UNCHANGED_BALANCES);
       expect(ctx.store.listHacEvents({ orderId }).map((e) => [e.action, e.reasonCode])).toEqual([
         ['FILE_UPLOAD', 'TS01'],

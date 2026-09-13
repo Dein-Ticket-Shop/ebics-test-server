@@ -30,8 +30,8 @@ export class OrderAuthError extends Error {
 
 /**
  * Thrown when an upload with SignatureFlag carries no signature that authorises it (signature class A, B or T)
- * and does not request the VEU. The BTU handler maps it to EBICS_SIGNATURE_VERIFICATION_FAILED (091301); the
- * customer protocol shows DS19 (signature rights insufficient).
+ * and does not request the VEU. The BTU handler answers 090003 ("Authorization failed", EBICS 3.0.2 chapter 3.14,
+ * EBICS_AUTHORISATION_ORDER_IDENTIFIER_FAILED); the customer protocol shows DS19 (signature rights insufficient).
  */
 export class SignatureAuthorisationError extends Error {
   constructor(message: string) {

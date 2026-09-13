@@ -164,17 +164,25 @@
 ## Phase 9: Signature classes
 
 - [x] Signature class per subscriber (`E`, `A`, `B`, `T`, default `E`): `PATCH /api/subscribers/:partnerId/:userId` / `POST /api/subscribers` `signatureClass` and a select on the subscriber page; replaces `EBICS_EDS_HOLD`
-- [x] Uploads (EBICS 3.0.2 chapter 11.2.3, SignatureFlag documentation in the H005 schema): no SignatureFlag → executed, signature counts as `T`; class authorises alone (`E`) → executed; otherwise `requestEDS` → VEU, without `requestEDS` → `091301` with HAC `DS19`
+- [x] Uploads (EBICS 3.0.2 chapter 11.2.3, SignatureFlag documentation in the H005 schema): no SignatureFlag → executed, signature counts as `T`; class authorises alone (`E`) → executed; otherwise `requestEDS` → VEU, without `requestEDS` → `090003` ("Authorization failed", chapter 3.14) with HAC `DS19`
 - [x] VEU release when the signatures of distinct users authorise the order: one `E`, or two with at least one `E` or `A`; `T` never counts; HVE/HVS by `T` → `090003`
 - [x] HVZ/HVD `SignerInfo/Permission@AuthorisationLevel` = the signer's class, `readyToBeSigned` and `NumSigRequired` follow the rules; HKD/HTD permissions of upload order types carry the user's class, `T` users have no HVE/HVS permission
 - [x] Protocol downloads (HAC, PTK) per subscriber instead of `EBICS_HAC_DENY_PARTNERS`
 
+## Phase 10: VEU overview
+
+- [x] HVU (EBICS 3.0.2 chapter 8.3.1): Service, OrderID, OrderDataSize, SigningInfo, SignerInfo and OriginatorInfo of every order waiting for signatures
+- [x] ServiceFilter in HVUOrderParams and HVZOrderParams: every given element must match, an order is listed when it matches one filter (chapter 8.3.6)
+- [x] HVU/HVZ list only orders the subscriber may sign (none for class `T` → `090005`); HVD/HVT by class `T` → `091007` EBICS_DISTRIBUTED_SIGNATURE_AUTHORISATION_FAILED (chapters 8.3.2, 8.3.3)
+- [x] HVZ `TotalAmount@isCredit="true"` for credit transfers (chapter 8.3.1.4)
+- [x] HVT with `completeOrderData="false"` (chapter 8.3.3): HVTResponseOrderData with NumOrderInfos and one OrderInfo per CdtTrfTxInf (MsgName, Originator/Recipient AccountInfo with IBAN, BIC if in the file and name, ExecutionDate, Amount `isCredit="true"`, Purpose description), `fetchLimit` (0 = all) and `fetchOffset`; an offset at or beyond the number of single orders → `091112`
+- [x] E002 AES padding per ANSI X9.23 / ISO 10126-2 (chapter 11.3.2.1) for every encrypted download including HPB: zeros and a last byte with the padding length (1-16); received order data is unpadded by that length byte, which also covers PKCS#7
+
 ### Not yet supported (TODO)
 
-- [ ] HVU (VEU overview without order details)
-- [ ] HVT order details without `completeOrderData="true"` (answered with `091112`)
 - [ ] Cryptographic verification of electronic signatures (uploads, HVE and HVS signatures are parsed only)
 - [ ] Replay of real-time messages for clients that were not connected
 - [ ] Technical subscribers with `SystemID` submitting on behalf of other users
 - [ ] Signature permissions limited to accounts, amounts or BTF, and orders that need two bank-technical signatures (minimum 2)
 - [ ] VEU for direct debits (pain.008 uploads are executed even when signatures are missing and `requestEDS` is set)
+- [ ] Customers without VEU agreement (`091007`) or without authorisation outside EBICS (`090003`), chapter 3.14; every customer is assumed to have both

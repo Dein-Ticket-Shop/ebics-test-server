@@ -23,11 +23,13 @@ function decryptHpbResponse(responseXml: string, encPrivateKeyPem: string): stri
     wrappedKey,
   );
 
-  // AES-128-CBC decrypt with zero IV
+  // E002: AES-128-CBC with zero IV, the last byte of the ANSI X9.23 padding is its length
   const iv = Buffer.alloc(16, 0);
   const decipher = createDecipheriv('aes-128-cbc', transactionKey, iv);
+  decipher.setAutoPadding(false);
   const encrypted = Buffer.from(orderDataB64, 'base64');
-  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  const padded = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  const decrypted = padded.subarray(0, padded.length - padded[padded.length - 1]!);
 
   // Inflate
   const xml = inflateSync(decrypted).toString('utf8');

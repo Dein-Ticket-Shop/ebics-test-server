@@ -34,7 +34,7 @@ export type UploadDecision = 'execute' | 'veu' | 'reject';
 /**
  * What happens to an upload, following the SignatureFlag documentation of the H005 schema:
  * - no SignatureFlag: the order is authorised outside EBICS (accompanying note) and executed
- * - SignatureFlag: the signatures in the order must authorise it, otherwise it is rejected (091301)
+ * - SignatureFlag: the signatures in the order must authorise it, otherwise it is rejected (090003, chapter 3.14)
  * - SignatureFlag with requestEDS: missing signatures are collected in the VEU
  */
 export function uploadDecision(upload: { signatureFlag: boolean; requestEds: boolean; signatureClass: SignatureClass }): UploadDecision {
