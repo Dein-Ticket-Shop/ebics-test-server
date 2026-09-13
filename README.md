@@ -21,6 +21,7 @@ inspect every request and response.
 - Technical subscribers (`SystemID`, EBICS 3.0.2 chapter 3.7): requests are authenticated with the technical subscriber's key and responses encrypted for it; its own electronic signatures count as transport signatures
 - Minimum number of bank-technical signatures per customer and BTF service (1 or 2, EBICS 3.0.2 chapter 11.2.3), reported as `NumSigRequired` in HKD/HTD
 - Direct debits (pain.008) wait in the VEU like credit transfers when their signatures do not authorise them and EDS is requested
+- Customer agreements on the VEU and on authorisation outside EBICS (EBICS 3.0.2 chapter 3.14): uploads without them are refused with `091007` or `090003`
 - Optional VoP confirmation: credit transfers without a full payee match (RCVC) wait for an HVE signature or an admin release
 - EBICS OrderIDs on uploads and INI/HIA, echoed in every response of the transaction
 - Statement generation: camt.053 and MT940

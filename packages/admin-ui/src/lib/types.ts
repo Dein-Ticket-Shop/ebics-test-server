@@ -391,3 +391,12 @@ export interface MinimumSignatureRules {
   /** Rules per BTF ServiceName */
   services: Record<string, 1 | 2>;
 }
+
+/** Contractual agreements of a customer that decide how uploads are authorised (EBICS 3.0.2 chapter 3.14) */
+export interface CustomerAgreements {
+  partnerId: string;
+  /** Uploads requesting EDS wait in the VEU; otherwise 091007 */
+  veu: boolean;
+  /** Uploads without signature flag are authorised outside EBICS; otherwise 090003 */
+  signingOutsideEbics: boolean;
+}

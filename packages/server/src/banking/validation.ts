@@ -29,14 +29,23 @@ export class OrderAuthError extends Error {
 }
 
 /**
- * Thrown when an upload with SignatureFlag carries no signature that authorises it (signature class A, B or T)
- * and does not request the VEU. The BTU handler answers 090003 ("Authorization failed", EBICS 3.0.2 chapter 3.14,
- * EBICS_AUTHORISATION_ORDER_IDENTIFIER_FAILED); the customer protocol shows DS19 (signature rights insufficient).
+ * Thrown when the bank refuses an upload for missing authorisation (EBICS 3.0.2 chapter 3.14): an upload with
+ * SignatureFlag whose signatures do not authorise it and that does not request the VEU (090003
+ * EBICS_AUTHORISATION_ORDER_IDENTIFIER_FAILED, DS19 signature rights insufficient), an upload without SignatureFlag
+ * of a customer without agreement on authorisation outside EBICS (090003, DS0A signatures required), or an upload
+ * requesting the VEU of a customer without VEU agreement (091007 EBICS_DISTRIBUTED_SIGNATURE_AUTHORISATION_FAILED, DS0A).
  */
 export class SignatureAuthorisationError extends Error {
-  constructor(message: string) {
+  /** Reason code of ES_VERIFICATION in the customer protocol */
+  readonly reasonCode: string;
+  /** The VEU was requested but not agreed: 091007 instead of 090003 */
+  readonly veuAgreementMissing: boolean;
+
+  constructor(message: string, options: { reasonCode?: string; veuAgreementMissing?: boolean } = {}) {
     super(message);
     this.name = 'SignatureAuthorisationError';
+    this.reasonCode = options.reasonCode ?? 'DS19';
+    this.veuAgreementMissing = options.veuAgreementMissing ?? false;
   }
 }
 

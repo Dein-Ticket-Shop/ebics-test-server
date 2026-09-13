@@ -259,6 +259,10 @@ export interface BankingStore {
   /** Sets the customer rule, or the rule of one BTF service; null removes it */
   setMinimumSignatures(partnerId: string, minimumSignatures: MinimumSignatures | null, serviceName?: string): void;
 
+  /** Agreements of the customer; both agreed unless changed */
+  getCustomerAgreements(partnerId: string): CustomerAgreements;
+  updateCustomerAgreements(partnerId: string, patch: Partial<Pick<CustomerAgreements, 'veu' | 'signingOutsideEbics'>>): CustomerAgreements;
+
   createBooking(data: Omit<Booking, 'id' | 'createdAt'>): Booking;
   listBookingsForAccount(accountId: number, fromDate?: string, toDate?: string): Booking[];
   deleteBooking(id: number): void;
@@ -403,6 +407,15 @@ export interface MinimumSignatureRules {
   minimumSignatures: MinimumSignatures;
   /** Rules per BTF ServiceName, e.g. { SCI: 2 } */
   services: Record<string, MinimumSignatures>;
+}
+
+/** Contractual agreements of a customer that decide how uploads are authorised (EBICS 3.0.2 chapter 3.14) */
+export interface CustomerAgreements {
+  partnerId: string;
+  /** VEU agreement: uploads requesting EDS whose signatures do not authorise them wait in the VEU, otherwise 091007 */
+  veu: boolean;
+  /** Orders without SignatureFlag are authorised outside EBICS (e.g. accompanying note), otherwise 090003 */
+  signingOutsideEbics: boolean;
 }
 
 export interface OrderSignature {

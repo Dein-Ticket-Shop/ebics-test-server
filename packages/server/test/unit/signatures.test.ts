@@ -202,6 +202,20 @@ describe('signature classes (Unterschriftsklassen)', () => {
       },
     );
 
+    it('applies the customer agreements of chapter 3.14', () => {
+      const withoutVeu = { veu: false, signingOutsideEbics: true };
+      const withoutOutside = { veu: true, signingOutsideEbics: false };
+      // Requested VEU without agreement: refused unless the signatures suffice (then requestEDS is ignored)
+      expect(uploadDecision({ signatureFlag: true, requestEds: true, signerClasses: ['A'], agreements: withoutVeu })).toBe('rejectWithoutVeuAgreement');
+      expect(uploadDecision({ signatureFlag: true, requestEds: true, signerClasses: ['E'], agreements: withoutVeu })).toBe('execute');
+      expect(uploadDecision({ signatureFlag: true, requestEds: false, signerClasses: ['A'], agreements: withoutVeu })).toBe('reject');
+      expect(uploadDecision({ signatureFlag: false, requestEds: false, signerClasses: ['T'], agreements: withoutVeu })).toBe('execute');
+      // No SignatureFlag without agreement on authorisation outside EBICS: refused
+      expect(uploadDecision({ signatureFlag: false, requestEds: false, signerClasses: ['T'], agreements: withoutOutside })).toBe('reject');
+      expect(uploadDecision({ signatureFlag: true, requestEds: false, signerClasses: ['E'], agreements: withoutOutside })).toBe('execute');
+      expect(uploadDecision({ signatureFlag: true, requestEds: true, signerClasses: ['B'], agreements: withoutOutside })).toBe('veu');
+    });
+
     it('applies the agreed minimum of two signatures to signed uploads only', () => {
       expect(uploadDecision({ signatureFlag: true, requestEds: false, signerClasses: ['E'], minimumSignatures: 2 })).toBe('reject');
       expect(uploadDecision({ signatureFlag: true, requestEds: true, signerClasses: ['E'], minimumSignatures: 2 })).toBe('veu');

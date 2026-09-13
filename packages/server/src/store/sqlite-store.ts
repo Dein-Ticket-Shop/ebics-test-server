@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { SignatureClass, MinimumSignatureRules, MinimumSignatures } from './types.js';
+import type { SignatureClass, MinimumSignatureRules, MinimumSignatures, CustomerAgreements } from './types.js';
 import type { EbicsStore, Subscriber, SubscriberKeys, HostConfig, BankKeys, ActivityLogEntry, ProtocolLogEntry, Transaction, TransactionPhase, DownloadData, BankingStore, BankConfig, Person, Account, Booking, AppStore, UploadedOrder } from './types.js';
 import type {
   DateFilter,
@@ -436,6 +436,7 @@ export class SqliteStore implements AppStore {
     this.db.exec('DELETE FROM bookings');
     this.db.exec('DELETE FROM partner_account_access');
     this.db.exec('DELETE FROM minimum_signatures');
+    this.db.exec('DELETE FROM customer_agreements');
     this.db.exec('DELETE FROM accounts');
     this.db.exec('DELETE FROM persons');
     this.db.exec('DELETE FROM bank_config');
@@ -615,6 +616,25 @@ export class SqliteStore implements AppStore {
     this.db.prepare(
       'INSERT INTO minimum_signatures (partner_id, service_name, minimum) VALUES (?, ?, ?) ON CONFLICT (partner_id, service_name) DO UPDATE SET minimum = excluded.minimum',
     ).run(partnerId, serviceName ?? '', minimumSignatures);
+  }
+
+  // Contractual agreements of a customer (EBICS 3.0.2 chapter 3.14)
+
+  getCustomerAgreements(partnerId: string): CustomerAgreements {
+    const row = this.db.prepare('SELECT veu, signing_outside_ebics FROM customer_agreements WHERE partner_id = ?').get(partnerId) as
+      | { veu: number; signing_outside_ebics: number }
+      | undefined;
+    return { partnerId, veu: row ? row.veu !== 0 : true, signingOutsideEbics: row ? row.signing_outside_ebics !== 0 : true };
+  }
+
+  updateCustomerAgreements(partnerId: string, patch: Partial<Pick<CustomerAgreements, 'veu' | 'signingOutsideEbics'>>): CustomerAgreements {
+    const current = this.getCustomerAgreements(partnerId);
+    const veu = patch.veu ?? current.veu;
+    const signingOutsideEbics = patch.signingOutsideEbics ?? current.signingOutsideEbics;
+    this.db.prepare(
+      'INSERT INTO customer_agreements (partner_id, veu, signing_outside_ebics) VALUES (?, ?, ?) ON CONFLICT (partner_id) DO UPDATE SET veu = excluded.veu, signing_outside_ebics = excluded.signing_outside_ebics',
+    ).run(partnerId, veu ? 1 : 0, signingOutsideEbics ? 1 : 0);
+    return this.getCustomerAgreements(partnerId);
   }
 
   createBooking(data: Omit<Booking, 'id' | 'createdAt'>): Booking {

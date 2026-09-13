@@ -180,6 +180,26 @@ export function createBankingAdminRoute(store: AppStore) {
     return c.json(store.getMinimumSignatureRules(partnerId));
   });
 
+  // Contractual agreements of the customer that decide how uploads are authorised (EBICS 3.0.2 chapter 3.14)
+
+  app.get('/partners/:partnerId/agreements', (c) => {
+    return c.json(store.getCustomerAgreements(c.req.param('partnerId')));
+  });
+
+  /** { veu?: boolean, signingOutsideEbics?: boolean } */
+  app.patch('/partners/:partnerId/agreements', async (c) => {
+    const partnerId = c.req.param('partnerId');
+    const body = (await c.req.json().catch(() => ({}))) as { veu?: unknown; signingOutsideEbics?: unknown };
+    const patch: { veu?: boolean; signingOutsideEbics?: boolean } = {};
+    for (const key of ['veu', 'signingOutsideEbics'] as const) {
+      if (body[key] === undefined) continue;
+      if (typeof body[key] !== 'boolean') return c.json({ error: `${key} must be a boolean` }, 400);
+      patch[key] = body[key] as boolean;
+    }
+    if (Object.keys(patch).length === 0) return c.json({ error: 'veu or signingOutsideEbics is required' }, 400);
+    return c.json(store.updateCustomerAgreements(partnerId, patch));
+  });
+
   // Bookings
 
   app.get('/accounts/:id/bookings', (c) => {

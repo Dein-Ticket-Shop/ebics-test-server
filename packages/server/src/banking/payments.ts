@@ -1,5 +1,6 @@
 import type {
   AppStore,
+  MinimumSignatures,
   PaymentOrder,
   PaymentStatusCode,
   PaymentTransaction,
@@ -8,7 +9,7 @@ import type {
 } from '../store/types.js';
 import { parseXml } from '../protocol/xml-parser.js';
 import { vopConfirmationRequired } from '../config/feature-flags.js';
-import { minimumSignaturesNote, uploadDecision, uploadSignatureClass } from './signatures.js';
+import { minimumSignaturesNote, uploadDecision, uploadSignatureClass, type UploadDecision } from './signatures.js';
 import { SignatureAuthorisationError } from './validation.js';
 import { vopGroupStatus } from './generators/pain002.js';
 import { xpathSelect } from '../protocol/xml-parser.js';
@@ -33,6 +34,31 @@ export interface CreditTransferUpload {
   signatureClass?: SignatureClass;
   /** Users whose verified signatures the upload carries, with their signature classes; defaults to the uploader */
   signers?: { userId: string; signatureClass: SignatureClass }[];
+}
+
+/**
+ * The error for an upload the bank refuses (EBICS 3.0.2 chapter 3.14), or undefined when it is executed or waits in the
+ * VEU: 090003 when the signatures do not authorise it and no VEU is requested, or when it has no SignatureFlag and
+ * authorisation outside EBICS is not agreed; 091007 when the VEU is requested but not agreed
+ */
+export function uploadRefusal(upload: {
+  decision: UploadDecision;
+  signatureFlag: boolean;
+  signers: { userId: string }[];
+  signerClasses: SignatureClass[];
+  minimumSignatures: MinimumSignatures;
+}): SignatureAuthorisationError | undefined {
+  const insufficient = `Unterschriftsklasse ${upload.signerClasses.join('+')} von ${upload.signers.map((s) => s.userId).join(', ')} reicht nicht aus${minimumSignaturesNote(upload.minimumSignatures)}`;
+  if (upload.decision === 'rejectWithoutVeuAgreement') {
+    return new SignatureAuthorisationError(`${insufficient} und keine VEU vereinbart`, { reasonCode: 'DS0A', veuAgreementMissing: true });
+  }
+  if (upload.decision !== 'reject') return undefined;
+  if (!upload.signatureFlag) {
+    return new SignatureAuthorisationError('Auftrag ohne Signatur-Flag, eine Autorisierung ausserhalb von EBICS ist nicht vereinbart', {
+      reasonCode: 'DS0A',
+    });
+  }
+  return new SignatureAuthorisationError(`${insufficient} und keine VEU angefordert`);
 }
 
 /** Thrown for admin actions that do not fit the order's current state */
@@ -120,12 +146,10 @@ export function receiveCreditTransfers(store: AppStore, upload: CreditTransferUp
   ).map((signer) => ({ userId: signer.userId, signatureClass: uploadSignatureClass(signatureFlag, signer.signatureClass) }));
   const signerClasses = signers.map((signer) => signer.signatureClass);
   const minimumSignatures = store.getMinimumSignatures(upload.partnerId, upload.serviceName);
-  const decision = uploadDecision({ signatureFlag, requestEds: upload.requestEds, signerClasses, minimumSignatures });
-  if (decision === 'reject') {
-    throw new SignatureAuthorisationError(
-      `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus${minimumSignaturesNote(minimumSignatures)} und keine VEU angefordert`,
-    );
-  }
+  const agreements = store.getCustomerAgreements(upload.partnerId);
+  const decision = uploadDecision({ signatureFlag, requestEds: upload.requestEds, signerClasses, minimumSignatures, agreements });
+  const refusal = uploadRefusal({ decision, signatureFlag, signers, signerClasses, minimumSignatures });
+  if (refusal) throw refusal;
 
   const doc = parseXml(upload.rawContent);
   const instructions = parsePain001(doc);

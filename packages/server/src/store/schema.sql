@@ -105,6 +105,13 @@ CREATE TABLE IF NOT EXISTS minimum_signatures (
     PRIMARY KEY (partner_id, service_name)
 );
 
+-- Contractual agreements per customer (EBICS 3.0.2 chapter 3.14); customers without a row have both
+CREATE TABLE IF NOT EXISTS customer_agreements (
+    partner_id TEXT PRIMARY KEY,
+    veu INTEGER NOT NULL DEFAULT 1,
+    signing_outside_ebics INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS bookings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,

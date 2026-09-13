@@ -23,6 +23,7 @@ import type {
   RealtimeConnection,
   KeptRealtimeMessages,
   MinimumSignatureRules,
+  CustomerAgreements,
   BtfNotification,
   DownloadData,
 } from './types.js';
@@ -129,6 +130,13 @@ export const grantAccountAccess = (partnerId: string, accountId: number) =>
   json<{ status: string }>(`${BANK}/partners/${encodeURIComponent(partnerId)}/accounts/${accountId}`, { method: 'POST' });
 export const revokeAccountAccess = (partnerId: string, accountId: number) =>
   json<{ status: string }>(`${BANK}/partners/${encodeURIComponent(partnerId)}/accounts/${accountId}`, { method: 'DELETE' });
+export const getCustomerAgreements = (partnerId: string) =>
+  json<CustomerAgreements>(`${BANK}/partners/${encodeURIComponent(partnerId)}/agreements`);
+export const updateCustomerAgreements = (partnerId: string, patch: Partial<Pick<CustomerAgreements, 'veu' | 'signingOutsideEbics'>>) =>
+  json<CustomerAgreements>(`${BANK}/partners/${encodeURIComponent(partnerId)}/agreements`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
 export const getMinimumSignatureRules = (partnerId: string) =>
   json<MinimumSignatureRules>(`${BANK}/partners/${encodeURIComponent(partnerId)}/minimum-signatures`);
 /** Sets the customer rule, or the rule of one BTF service; null removes it */

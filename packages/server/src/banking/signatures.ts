@@ -42,21 +42,28 @@ export function uploadSignatureClass(signatureFlag: boolean, subscriberClass: Si
   return signatureFlag ? subscriberClass : 'T';
 }
 
-export type UploadDecision = 'execute' | 'veu' | 'reject';
+export type UploadDecision = 'execute' | 'veu' | 'reject' | 'rejectWithoutVeuAgreement';
 
 /**
- * What happens to an upload, following the SignatureFlag documentation of the H005 schema:
- * - no SignatureFlag: the order is authorised outside EBICS (accompanying note) and executed
+ * What happens to an upload, following the SignatureFlag documentation of the H005 schema and chapter 3.14:
+ * - no SignatureFlag: the order is authorised outside EBICS (accompanying note) and executed; rejected (090003) when
+ *   the customer has not agreed to authorisation outside EBICS
  * - SignatureFlag: the signatures in the order (one class per distinct signer) must authorise it for the agreed
  *   minimum number of signatures, otherwise it is rejected (090003, chapter 3.14)
- * - SignatureFlag with requestEDS: missing signatures are collected in the VEU
+ * - SignatureFlag with requestEDS: missing signatures are collected in the VEU; rejected (091007) when the customer has
+ *   no VEU agreement. Sufficient signatures execute the order regardless of requestEDS.
  */
 export function uploadDecision(upload: {
   signatureFlag: boolean;
   requestEds: boolean;
   signerClasses: SignatureClass[];
   minimumSignatures?: MinimumSignatures;
+  /** Agreements of the customer (chapter 3.14); both by default */
+  agreements?: { veu: boolean; signingOutsideEbics: boolean };
 }): UploadDecision {
-  if (!upload.signatureFlag || isAuthorised(upload.signerClasses, upload.minimumSignatures)) return 'execute';
-  return upload.requestEds ? 'veu' : 'reject';
+  const agreements = upload.agreements ?? { veu: true, signingOutsideEbics: true };
+  if (!upload.signatureFlag) return agreements.signingOutsideEbics ? 'execute' : 'reject';
+  if (isAuthorised(upload.signerClasses, upload.minimumSignatures)) return 'execute';
+  if (!upload.requestEds) return 'reject';
+  return agreements.veu ? 'veu' : 'rejectWithoutVeuAgreement';
 }

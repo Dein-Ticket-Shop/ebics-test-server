@@ -3,10 +3,10 @@ import { ReturnCode } from '../protocol/return-codes.js';
 import { processPain001 } from '../banking/processors/pain001.js';
 import { processPain008 } from '../banking/processors/pain008.js';
 import { OrderDataError, OrderAuthError, SignatureAuthorisationError } from '../banking/validation.js';
-import { directDebitProtocolText, receiveCreditTransfers } from '../banking/payments.js';
+import { directDebitProtocolText, receiveCreditTransfers, uploadRefusal } from '../banking/payments.js';
 import { holdDirectDebits } from '../banking/direct-debits.js';
 import { recordUploadCompleted, recordUploadRejected, type OrderContext } from '../banking/order-events.js';
-import { minimumSignaturesNote, uploadDecision, uploadSignatureClass } from '../banking/signatures.js';
+import { uploadDecision, uploadSignatureClass } from '../banking/signatures.js';
 import { SignatureCheckError, decryptSignatureData, verifyUserSignatureData } from '../banking/electronic-signatures.js';
 import { logError } from '../logger.js';
 
@@ -80,12 +80,10 @@ export function handleBtu(
     const signerClasses = signers.map((signer) => uploadSignatureClass(signatureFlag, signer.signatureClass));
 
     const minimumSignatures = store.getMinimumSignatures(subscriber.partnerId, serviceName);
-    const decision = uploadDecision({ signatureFlag, requestEds, signerClasses, minimumSignatures });
-    if (decision === 'reject') {
-      throw new SignatureAuthorisationError(
-        `Unterschriftsklasse ${signerClasses.join('+')} von ${signers.map((s) => s.userId).join(', ')} reicht nicht aus${minimumSignaturesNote(minimumSignatures)} und keine VEU angefordert`,
-      );
-    }
+    const agreements = store.getCustomerAgreements(subscriber.partnerId);
+    const decision = uploadDecision({ signatureFlag, requestEds, signerClasses, minimumSignatures, agreements });
+    const refusal = uploadRefusal({ decision, signatureFlag, signers, signerClasses, minimumSignatures });
+    if (refusal) throw refusal;
     if (msgName === 'pain.001') {
       if (context.orderId) {
         // Payment orders with VoP, payment status history, HAC events and the VEU for missing signatures
@@ -135,7 +133,7 @@ export function handleBtu(
     logError(`${msgName ?? serviceName} processing`, err);
     if (events) {
       const reasonCode =
-        err instanceof SignatureCheckError ? err.reasonCode : err instanceof SignatureAuthorisationError ? 'DS19' : 'TD03';
+        err instanceof SignatureCheckError || err instanceof SignatureAuthorisationError ? err.reasonCode : 'TD03';
       recordUploadRejected(store, events, err instanceof Error ? err.message : String(err), reasonCode);
     }
     // Electronic signature not verifiable (chapter 5.3): the return code of the failed check
@@ -152,8 +150,9 @@ export function handleBtu(
     }
     // Signature flag set, but the uploader's signature class does not authorise the order and no VEU was requested:
     // "Authorization failed" (EBICS 3.0.2 chapter 3.14), EBICS_AUTHORISATION_ORDER_IDENTIFIER_FAILED in H005
+    // Without VEU agreement a requested VEU is "EBICS Distributed Signature authorization failed" (chapter 3.14)
     if (err instanceof SignatureAuthorisationError) {
-      return ReturnCode.EBICS_AUTHORISATION_ORDER_TYPE_FAILED;
+      return err.veuAgreementMissing ? ReturnCode.EBICS_DISTRIBUTED_SIGNATURE_AUTHORISATION_FAILED : ReturnCode.EBICS_AUTHORISATION_ORDER_TYPE_FAILED;
     }
   }
 

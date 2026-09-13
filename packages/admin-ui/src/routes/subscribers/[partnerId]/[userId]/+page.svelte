@@ -12,8 +12,10 @@
     updateSubscriber,
     getMinimumSignatureRules,
     setMinimumSignatures,
+    getCustomerAgreements,
+    updateCustomerAgreements,
   } from '$lib/api.js';
-  import type { MinimumSignatureRules, SignatureClass, Subscriber } from '$lib/types.js';
+  import type { CustomerAgreements, MinimumSignatureRules, SignatureClass, Subscriber } from '$lib/types.js';
 
   interface Props {
     data: { subscriber: Subscriber };
@@ -96,6 +98,26 @@
   let minimumError = $state('');
   let newServiceName = $state('');
   let newServiceMinimum = $state<1 | 2>(2);
+
+  // Contractual agreements of the customer (EBICS 3.0.2 chapter 3.14)
+  let agreements = $state<CustomerAgreements | null>(null);
+  let agreementsError = $state('');
+
+  $effect(() => {
+    getCustomerAgreements(sub.partnerId)
+      .then((result) => (agreements = result))
+      .catch((e) => (agreementsError = e instanceof Error ? e.message : 'Loading the agreements failed'));
+  });
+
+  async function saveAgreement(patch: Partial<Pick<CustomerAgreements, 'veu' | 'signingOutsideEbics'>>, input: HTMLInputElement) {
+    agreementsError = '';
+    try {
+      agreements = await updateCustomerAgreements(sub.partnerId, patch);
+    } catch (e) {
+      input.checked = !input.checked;
+      agreementsError = e instanceof Error ? e.message : 'Saving the agreement failed';
+    }
+  }
 
   $effect(() => {
     getMinimumSignatureRules(sub.partnerId)
@@ -264,6 +286,49 @@
       </span>
     </span>
   </label>
+</div>
+
+<!-- Agreements of the customer -->
+<h2 class="text-lg font-semibold mb-1">Agreements of customer <span class="font-mono">{sub.partnerId}</span></h2>
+<p class="text-xs text-base-content/50 mb-4">
+  Contractual agreements for all users of the customer that decide how uploads are authorised (EBICS 3.0.2 chapter 3.14).
+</p>
+<div class="bg-base-200 rounded-xl p-4 mb-6 flex flex-col gap-4">
+  {#if agreementsError}
+    <div class="alert alert-error text-sm">{agreementsError}</div>
+  {/if}
+  {#if agreements}
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input
+        type="checkbox"
+        class="toggle toggle-success toggle-sm mt-0.5"
+        checked={agreements.veu}
+        onchange={(e) => saveAgreement({ veu: e.currentTarget.checked }, e.currentTarget)}
+      />
+      <span>
+        <span class="text-sm font-medium">VEU (distributed electronic signature)</span>
+        <span class="block text-xs text-base-content/50 mt-0.5">
+          When off, uploads requesting EDS whose signatures do not authorise them are refused with
+          <span class="font-mono">091007</span> instead of waiting in the VEU.
+        </span>
+      </span>
+    </label>
+    <label class="flex items-start gap-3 cursor-pointer">
+      <input
+        type="checkbox"
+        class="toggle toggle-success toggle-sm mt-0.5"
+        checked={agreements.signingOutsideEbics}
+        onchange={(e) => saveAgreement({ signingOutsideEbics: e.currentTarget.checked }, e.currentTarget)}
+      />
+      <span>
+        <span class="text-sm font-medium">Authorisation outside EBICS</span>
+        <span class="block text-xs text-base-content/50 mt-0.5">
+          When off, uploads without signature flag (authorised by an accompanying note) are refused with
+          <span class="font-mono">090003</span> instead of being executed.
+        </span>
+      </span>
+    </label>
+  {/if}
 </div>
 
 <!-- Minimum signatures of the customer -->
