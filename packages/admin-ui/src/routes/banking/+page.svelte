@@ -106,7 +106,18 @@
       </div>
       <div class="form-control">
         <label class="label" for="blz"><span class="label-text text-xs">BLZ</span></label>
-        <input id="blz" type="text" class="input input-bordered input-sm font-mono" bind:value={blz} placeholder="10020030" />
+        <input
+          id="blz"
+          type="text"
+          inputmode="numeric"
+          maxlength="8"
+          class="input input-bordered input-sm font-mono"
+          bind:value={blz}
+          placeholder="10020030"
+        />
+        {#if blz.trim() && !/^\d{8}$/.test(blz.trim())}
+          <span class="text-xs text-warning mt-1">The BLZ must be exactly 8 digits.</span>
+        {/if}
       </div>
       <div class="form-control">
         <label class="label" for="bic"><span class="label-text text-xs">BIC</span></label>
@@ -115,7 +126,7 @@
     </div>
     <div class="flex gap-2 mt-5 justify-end">
       <button class="btn btn-ghost btn-sm" onclick={() => editing = false}>Cancel</button>
-      <button class="btn btn-primary btn-sm" disabled={saving || !blz.trim() || !bankName.trim() || !bic.trim()} onclick={handleSave}>
+      <button class="btn btn-primary btn-sm" disabled={saving || !/^\d{8}$/.test(blz.trim()) || !bankName.trim() || !bic.trim()} onclick={handleSave}>
         {saving ? 'Saving...' : 'Save'}
       </button>
     </div>
