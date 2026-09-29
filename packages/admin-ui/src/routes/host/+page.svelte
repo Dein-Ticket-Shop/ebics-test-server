@@ -2,7 +2,7 @@
   import { invalidateAll } from '$app/navigation';
   import KeyCard from '$lib/components/KeyCard.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { configureHost } from '$lib/api.js';
+  import { configureHost, rotateBankKeys } from '$lib/api.js';
   import type { EnvFlag, EnvFlagValue, HostConfig } from '$lib/types.js';
 
   interface Props {
@@ -27,6 +27,22 @@
   let showReconfigure = $state(false);
   let newHostId = $state('');
   let reconfiguring = $state(false);
+
+  let rotating = $state(false);
+  let signWithPreviousKeys = $state(true);
+
+  async function handleRotateBankKeys() {
+    if (!confirm('Generate new bank keys? Subscribers get EBICS_BANK_PUBKEY_UPDATE_REQUIRED until they run HPB again.')) return;
+    rotating = true;
+    try {
+      await rotateBankKeys(signWithPreviousKeys);
+      await invalidateAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to rotate bank keys');
+    } finally {
+      rotating = false;
+    }
+  }
 
   async function handleReconfigure() {
     if (!newHostId.trim()) return;
@@ -83,18 +99,37 @@
     </div>
   {/if}
 
-  <h2 class="text-lg font-semibold mb-4">Bank Keys</h2>
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-lg font-semibold">Bank Keys</h2>
+    <div class="flex items-center gap-3">
+      <label class="label cursor-pointer gap-2 text-xs">
+        <input type="checkbox" class="checkbox checkbox-xs" bind:checked={signWithPreviousKeys} />
+        Sign with previous keys
+      </label>
+      <button class="btn btn-ghost btn-sm gap-1.5" disabled={rotating} onclick={handleRotateBankKeys}>
+        {rotating ? 'Rotating...' : 'Rotate bank keys'}
+      </button>
+    </div>
+  </div>
+  <p class="text-xs text-base-content/50 mb-4">
+    Rotating simulates a bank key change: requests with the old key digests get
+    <code class="font-mono bg-base-300 rounded px-1">EBICS_BANK_PUBKEY_UPDATE_REQUIRED</code> (091008) until the
+    subscriber runs HPB again. Signed with the previous keys, clients can adopt the new certificates without a manual
+    check (EBICS 3.0.2 chapter 4.6.2); self-signed, they have to compare the hashes again.
+  </p>
 
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
     <KeyCard
       label="Authentication"
       version={data.host.bankKeys.authenticationVersion}
       certificate={data.host.bankKeys.authenticationCertificate}
+      publicKeyDigest={data.host.bankKeys.authenticationPublicKeyDigest}
     />
     <KeyCard
       label="Encryption"
       version={data.host.bankKeys.encryptionVersion}
       certificate={data.host.bankKeys.encryptionCertificate}
+      publicKeyDigest={data.host.bankKeys.encryptionPublicKeyDigest}
     />
   </div>
 {/if}

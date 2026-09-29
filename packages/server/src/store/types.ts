@@ -49,6 +49,11 @@ export interface BankKeys {
 export interface HostConfig {
   hostId: string;
   bankKeys: BankKeys;
+  /**
+   * SHA-256 digests (base64) of bank certificates replaced by a bank key change. Requests that still send one of
+   * them in BankPubKeyDigests are rejected with EBICS_BANK_PUBKEY_UPDATE_REQUIRED, so the client downloads HPB again.
+   */
+  retiredBankKeyDigests?: string[];
 }
 
 export interface ActivityLogEntry {

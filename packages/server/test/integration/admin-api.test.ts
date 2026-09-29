@@ -107,6 +107,17 @@ describe('Admin API', () => {
     });
   });
 
+  describe('GET /api/host', () => {
+    it('should return the bank certificates with their public key digests (X002/E002 of bank letters)', async () => {
+      const res = await app.request('/api/host');
+      expect(res.status).toBe(200);
+      const { bankKeys } = await res.json();
+      expect(bankKeys.authenticationPublicKeyDigest).toMatch(/^[0-9a-f]{64}$/);
+      expect(bankKeys.encryptionPublicKeyDigest).toMatch(/^[0-9a-f]{64}$/);
+      expect(bankKeys.authenticationPublicKeyDigest).not.toBe(bankKeys.encryptionPublicKeyDigest);
+    });
+  });
+
   describe('POST /api/host', () => {
     it('should reconfigure host', async () => {
       const res = await app.request('/api/host', {

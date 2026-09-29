@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { generateBankKeys } from '../../src/bank/bank-keys.js';
+import { generateBankKeys, rotateBankKeys, bankCertificateDigest, bankPublicKeyDigest } from '../../src/bank/bank-keys.js';
+import { createHash } from 'node:crypto';
+import { X509Certificate } from 'node:crypto';
 import { createPublicKey } from 'node:crypto';
 import forge from 'node-forge';
 
@@ -45,5 +47,49 @@ describe('bank-keys', () => {
     const cert = forge.pki.certificateFromPem(keys.authenticationCertificate);
     const cn = cert.subject.getField('CN');
     expect(cn.value).toContain('TESTBANK');
+  });
+
+  describe('bankPublicKeyDigest', () => {
+    it('hashes "exponent modulus" in lowercase hex without leading zeros', () => {
+      const publicKey = forge.pki.certificateFromPem(keys.authenticationCertificate).publicKey as forge.pki.rsa.PublicKey;
+      const expected = createHash('sha256')
+        .update(`${publicKey.e.toString(16)} ${publicKey.n.toString(16)}`)
+        .digest('hex');
+      expect(bankPublicKeyDigest(keys.authenticationCertificate)).toBe(expected);
+    });
+  });
+
+  describe('rotateBankKeys', () => {
+    const config = { hostId: 'TESTBANK', bankKeys: keys };
+
+    it('keeps the digests of the old certificates', () => {
+      const rotated = rotateBankKeys(config);
+      expect(rotated.retiredBankKeyDigests).toEqual([
+        bankCertificateDigest(keys.authenticationCertificate),
+        bankCertificateDigest(keys.encryptionCertificate),
+      ]);
+      expect(rotated.bankKeys.authenticationCertificate).not.toBe(keys.authenticationCertificate);
+    });
+
+    it('issues self-signed certificates by default', () => {
+      const rotated = rotateBankKeys(config).bankKeys;
+      const auth = new X509Certificate(rotated.authenticationCertificate);
+      expect(auth.verify(auth.publicKey)).toBe(true);
+      expect(auth.verify(new X509Certificate(keys.authenticationCertificate).publicKey)).toBe(false);
+    });
+
+    it('signs each new certificate with the previous key of the same type when asked', () => {
+      const rotated = rotateBankKeys(config, { signWithPreviousKeys: true }).bankKeys;
+      const oldAuth = new X509Certificate(keys.authenticationCertificate);
+      const oldEnc = new X509Certificate(keys.encryptionCertificate);
+      const auth = new X509Certificate(rotated.authenticationCertificate);
+      const enc = new X509Certificate(rotated.encryptionCertificate);
+
+      expect(auth.verify(oldAuth.publicKey)).toBe(true);
+      expect(enc.verify(oldEnc.publicKey)).toBe(true);
+      expect(auth.verify(auth.publicKey)).toBe(false);
+      expect(auth.issuer).toBe(oldAuth.subject);
+      expect(new Date(auth.validFrom).getTime()).toBeLessThanOrEqual(Date.now());
+    });
   });
 });

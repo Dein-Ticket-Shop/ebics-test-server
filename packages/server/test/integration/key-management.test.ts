@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { privateDecrypt, createDecipheriv, constants } from 'node:crypto';
+import { privateDecrypt, createDecipheriv, constants, X509Certificate } from 'node:crypto';
 import { createTestApp, postEbics, HOST_ID, PARTNER_ID, USER_ID } from '../helpers/test-server.js';
 import {
   esSigner,
@@ -171,6 +171,56 @@ describe('Key Management', () => {
       expect(sub.keys.signatureCertificate).toBe(certToBase64(newKeys.signatureCert));
       expect(sub.keys.authenticationCertificate).toBe(certToBase64(newKeys.authCert));
       expect(sub.keys.encryptionCertificate).toBe(certToBase64(newKeys.encCert));
+    });
+  });
+
+  describe('bank key change', () => {
+    it('should reject the old bank key digests with EBICS_BANK_PUBKEY_UPDATE_REQUIRED until HPB', async () => {
+      const before = await postEbics(app, buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'HTD'));
+      expect(await before.text()).toContain('<ReturnCode>000000</ReturnCode>');
+
+      const rotateRes = await app.request('/api/host/bank-keys/rotate', { method: 'POST' });
+      expect(rotateRes.status).toBe(200);
+
+      const stale = await postEbics(app, buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'HTD'));
+      expect(await stale.text()).toContain('<ReturnCode>091008</ReturnCode>');
+
+      const hpbRes = await postEbics(app, buildHpbRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys));
+      expect(await hpbRes.text()).toContain('000000');
+
+      const hostConfig = store.getHostConfig()!;
+      const newBankCerts = {
+        authCertPem: hostConfig.bankKeys.authenticationCertificate,
+        encCertPem: hostConfig.bankKeys.encryptionCertificate,
+      };
+      expect(newBankCerts.authCertPem).not.toBe(bankCerts.authCertPem);
+      const after = await postEbics(app, buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, newBankCerts, 'HTD'));
+      expect(await after.text()).toContain('<ReturnCode>000000</ReturnCode>');
+    });
+
+    it('should sign the new bank certificates with the old keys when asked', async () => {
+      const rotateRes = await app.request('/api/host/bank-keys/rotate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signWithPreviousKeys: true }),
+      });
+      expect(rotateRes.status).toBe(200);
+
+      const rotated = store.getHostConfig()!.bankKeys;
+      const oldAuth = new X509Certificate(bankCerts.authCertPem);
+      expect(new X509Certificate(rotated.authenticationCertificate).verify(oldAuth.publicKey)).toBe(true);
+
+      const stale = await postEbics(app, buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'HTD'));
+      expect(await stale.text()).toContain('<ReturnCode>091008</ReturnCode>');
+    });
+
+    it('should keep rejecting keys from earlier rotations', async () => {
+      await app.request('/api/host/bank-keys/rotate', { method: 'POST' });
+      await app.request('/api/host/bank-keys/rotate', { method: 'POST' });
+
+      const res = await postEbics(app, buildEbicsDownloadInitRequest(HOST_ID, PARTNER_ID, USER_ID, clientKeys, bankCerts, 'HTD'));
+      expect(await res.text()).toContain('<ReturnCode>091008</ReturnCode>');
+      expect(store.getHostConfig()!.retiredBankKeyDigests).toHaveLength(4);
     });
   });
 

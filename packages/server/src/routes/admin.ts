@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppStore, Subscriber } from '../store/types.js';
 import { SubscriberState } from '../store/types.js';
-import { generateBankKeys } from '../bank/bank-keys.js';
+import { bankPublicKeyDigest, generateBankKeys, rotateBankKeys } from '../bank/bank-keys.js';
 import { createBankingAdminRoute } from './admin-banking.js';
 import { calculateIban } from '../banking/iban.js';
 import { createPaymentsAdminRoute } from './admin-payments.js';
@@ -52,8 +52,10 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
       bankKeys: {
         authenticationVersion: config.bankKeys.authenticationVersion,
         authenticationCertificate: config.bankKeys.authenticationCertificate,
+        authenticationPublicKeyDigest: bankPublicKeyDigest(config.bankKeys.authenticationCertificate),
         encryptionVersion: config.bankKeys.encryptionVersion,
         encryptionCertificate: config.bankKeys.encryptionCertificate,
+        encryptionPublicKeyDigest: bankPublicKeyDigest(config.bankKeys.encryptionCertificate),
       },
     });
   });
@@ -64,6 +66,20 @@ export function createAdminRoute(store: AppStore, hostId?: string, realtime: Rea
     store.setHostConfig({ hostId: body.hostId, bankKeys });
     store.logActivity({ eventType: 'host_configured', details: { hostId: body.hostId } });
     return c.json({ hostId: body.hostId, status: 'configured' });
+  });
+
+  /**
+   * Bank key change: new bank keys; requests with the old digests get EBICS_BANK_PUBKEY_UPDATE_REQUIRED (091008).
+   * `{ "signWithPreviousKeys": true }` signs the new certificates with the old keys (EBICS 3.0.2 chapter 4.6.2).
+   */
+  app.post('/host/bank-keys/rotate', async (c) => {
+    const config = store.getHostConfig();
+    if (!config) return c.json({ error: 'Host not configured' }, 404);
+    const body = await c.req.json<{ signWithPreviousKeys?: boolean }>().catch(() => ({}) as { signWithPreviousKeys?: boolean });
+    const signWithPreviousKeys = body.signWithPreviousKeys === true;
+    store.setHostConfig(rotateBankKeys(config, { signWithPreviousKeys }));
+    store.logActivity({ eventType: 'bank_keys_rotated', details: { hostId: config.hostId, signWithPreviousKeys } });
+    return c.json({ hostId: config.hostId, status: 'rotated' });
   });
 
   app.get('/stats', (c) => {

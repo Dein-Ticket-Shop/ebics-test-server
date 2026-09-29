@@ -136,6 +136,13 @@ bank keys with HPB.
 To skip the activation step during local testing, start the server with
 `EBICS_ALLOW_PREACTIVATION=true` so HPB works right after INI and HIA.
 
+To test a bank key change, click "Rotate bank keys" on the Host Config page (or `POST /api/host/bank-keys/rotate`).
+The server generates new bank keys and answers every request that still names the old ones in `BankPubKeyDigests`
+with `091008` EBICS_BANK_PUBKEY_UPDATE_REQUIRED, until the client downloads the new keys with HPB. With "Sign with
+previous keys" (`{ "signWithPreviousKeys": true }`) each new certificate is signed by the old key of the same type, so
+a client can adopt it without a manual check (EBICS 3.0.2 chapter 4.6.2); otherwise the new certificates are
+self-signed.
+
 ## Demo data
 
 Seed a demo bank, persons, accounts, and bookings with one call:

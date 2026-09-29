@@ -48,6 +48,11 @@ export const configureHost = (hostId: string) =>
     method: 'POST',
     body: JSON.stringify({ hostId }),
   });
+export const rotateBankKeys = (signWithPreviousKeys: boolean) =>
+  json<{ hostId: string; status: string }>(`${API}/host/bank-keys/rotate`, {
+    method: 'POST',
+    body: JSON.stringify({ signWithPreviousKeys }),
+  });
 
 export const getStats = () => json<Stats>(`${API}/stats`);
 

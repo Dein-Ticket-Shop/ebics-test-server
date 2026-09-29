@@ -200,6 +200,15 @@ function handleTransactionInit(ctx: HandlerContext, config: DispatcherConfig): H
     return errorResponse(ReturnCode.EBICS_INTERNAL_ERROR);
   }
 
+  // After a bank key change the client still names the old bank keys and has to download them again with HPB
+  const bankPubKeyDigests = [
+    xpathString('//ebics:header/ebics:static/ebics:BankPubKeyDigests/ebics:Authentication/text()', ctx.doc),
+    xpathString('//ebics:header/ebics:static/ebics:BankPubKeyDigests/ebics:Encryption/text()', ctx.doc),
+  ];
+  if (bankPubKeyDigests.some((digest) => digest && hostConfig.retiredBankKeyDigests?.includes(digest.trim()))) {
+    return errorResponse(ReturnCode.EBICS_BANK_PUBKEY_UPDATE_REQUIRED);
+  }
+
   const orderType = xpathString('//ebics:OrderDetails/ebics:AdminOrderType/text()', ctx.doc);
   if (!orderType) {
     return errorResponse(ReturnCode.EBICS_INVALID_ORDER_TYPE);

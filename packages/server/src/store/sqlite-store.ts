@@ -50,6 +50,7 @@ export class SqliteStore implements AppStore {
     this.ensureColumn('transactions', 'signature_flag', 'INTEGER NOT NULL DEFAULT 0');
     this.ensureColumn('transactions', 'system_id', 'TEXT');
     this.ensureColumn('payment_orders', 'vop_confirmation_required', 'INTEGER NOT NULL DEFAULT 0');
+    this.ensureColumn('host_config', 'retired_bank_key_digests', "TEXT NOT NULL DEFAULT '[]'");
     this.ensureColumn('payment_order_signatures', 'signature_class', 'TEXT');
     this.ensureColumn('subscribers', 'protocol_downloads_allowed', 'INTEGER NOT NULL DEFAULT 1');
     this.ensureColumn('subscribers', 'signature_class', "TEXT NOT NULL DEFAULT 'E'");
@@ -105,13 +106,14 @@ export class SqliteStore implements AppStore {
         encryptionCertificate: row['enc_certificate'],
         encryptionVersion: row['enc_version'],
       },
+      retiredBankKeyDigests: JSON.parse(row['retired_bank_key_digests'] ?? '[]') as string[],
     };
   }
 
   setHostConfig(config: HostConfig): void {
     this.db.prepare(`
-      INSERT OR REPLACE INTO host_config (id, host_id, auth_private_key, auth_certificate, auth_version, enc_private_key, enc_certificate, enc_version)
-      VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO host_config (id, host_id, auth_private_key, auth_certificate, auth_version, enc_private_key, enc_certificate, enc_version, retired_bank_key_digests)
+      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       config.hostId,
       config.bankKeys.authenticationPrivateKey,
@@ -120,6 +122,7 @@ export class SqliteStore implements AppStore {
       config.bankKeys.encryptionPrivateKey,
       config.bankKeys.encryptionCertificate,
       config.bankKeys.encryptionVersion,
+      JSON.stringify(config.retiredBankKeyDigests ?? []),
     );
   }
 

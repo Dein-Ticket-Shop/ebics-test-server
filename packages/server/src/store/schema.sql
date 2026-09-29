@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS host_config (
     auth_version TEXT NOT NULL DEFAULT 'X002',
     enc_private_key TEXT NOT NULL,
     enc_certificate TEXT NOT NULL,
-    enc_version TEXT NOT NULL DEFAULT 'E002'
+    enc_version TEXT NOT NULL DEFAULT 'E002',
+    retired_bank_key_digests TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS subscribers (

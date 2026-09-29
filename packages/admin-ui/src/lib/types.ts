@@ -34,8 +34,12 @@ export interface Subscriber {
 export interface BankKeysPublic {
   authenticationVersion: string;
   authenticationCertificate: string;
+  /** SHA-256 of the public key, X002 in bank letters */
+  authenticationPublicKeyDigest: string;
   encryptionVersion: string;
   encryptionCertificate: string;
+  /** SHA-256 of the public key, E002 in bank letters */
+  encryptionPublicKeyDigest: string;
 }
 
 export interface HostConfig {
